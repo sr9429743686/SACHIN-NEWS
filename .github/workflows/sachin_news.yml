@@ -1,0 +1,46 @@
+name: Sachin NSE BSE SEBI News Bot
+
+on:
+  schedule:
+    # દર 15 મિનિટે ઓટોમેટિક રન થશે
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run-news-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run SACHIN_NEWS.PY
+        env:
+          REFRESH_TOKEN: ${{ secrets.REFRESH_TOKEN }}
+          CLIENT_ID: ${{ secrets.CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+          GEMINI_API_KEY_1: ${{ secrets.GEMINI_API_KEY_1 }}
+          GEMINI_API_KEY_2: ${{ secrets.GEMINI_API_KEY_2 }}
+          BLOG_ID: ${{ secrets.BLOG_ID }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: python SACHIN_NEWS.PY
+
+      - name: Save History & Thumbnails
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "MarketMunafa Bot"
+          git add posted_history.json thumbnails/ || true
+          git diff --staged --quiet || git commit -m "Auto update news history & HD thumbnails"
+          git push || true
