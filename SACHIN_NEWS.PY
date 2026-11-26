@@ -1,5 +1,6 @@
 import os
 import re
+import io
 import json
 import time
 import hashlib
@@ -7,6 +8,7 @@ import subprocess
 import requests
 import feedparser
 import numpy as np
+from pypdf import PdfReader
 from datetime import datetime, timezone, timedelta
 from dateutil import parser as date_parser
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -17,15 +19,15 @@ from googleapiclient.discovery import build
 
 # ================= CONFIGURATION =================
 MODEL_NAME = "gemini-3.5-flash-lite"
-MIN_QUALITY_SCORE = 95       # 95/100 થી ઓછો સ્કોર હોય તો પોસ્ટ નહીં થાય
-MAX_AUDIT_ROUNDS = 3         # જ્યાં સુધી પરફેક્ટ ન થાય ત્યાં સુધી 3 રાઉન્ડ ચેક
-TIME_WINDOW_MINUTES = 15     # છેલ્લી 15 મિનિટના ન્યૂઝ
+MIN_QUALITY_SCORE = 95
+MAX_AUDIT_ROUNDS = 3
+TIME_WINDOW_MINUTES = 15
 
 FEEDS = [
-    {"name": "BSE Announcement", "url": "https://www.bseindia.com/data/xml/announcements.aspx"},
-    {"name": "BSE Notice", "url": "https://www.bseindia.com/data/xml/notices.xml"},
     {"name": "NSE Announcement", "url": "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml"},
+    {"name": "BSE Announcement", "url": "https://www.bseindia.com/data/xml/announcements.aspx"},
     {"name": "NSE Corporate Action", "url": "https://nsearchives.nseindia.com/content/RSS/Corporate_action.xml"},
+    {"name": "BSE Notice", "url": "https://www.bseindia.com/data/xml/notices.xml"},
     {"name": "SEBI Update", "url": "https://www.sebi.gov.in/sebirss.xml"},
 ]
 
@@ -49,7 +51,7 @@ os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Accept": "application/xml,text/xml,application/rss+xml,*/*;q=0.8",
+    "Accept": "application/pdf,application/xml,text/xml,application/rss+xml,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
 
@@ -63,6 +65,60 @@ def load_history():
 def save_history(history_set):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(list(history_set)[-500:], f, indent=2)
+
+def normalize_company_key(text):
+    # NSE અને BSE બંને પરથી એક જ કંપનીના ડુપ્લિકેટ ન્યૂઝ રોકવા માટે
+    clean = re.sub(r"[^a-z0-9\s]", " ", text.lower())
+    words = [w for w in clean.split() if w not in {"limited", "ltd", "india", "ind", "private", "pvt", "the", "of", "and"}]
+    today_str = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%Y-%m-%d")
+    return f"{today_str}|{'_'.join(words[:3])}"
+
+def get_blogger_service():
+    creds = Credentials(
+        token=None,
+        refresh_token=os.environ["REFRESH_TOKEN"],
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=os.environ["CLIENT_ID"],
+        client_secret=os.environ["CLIENT_SECRET"],
+    )
+    return build("blogger", "v3", credentials=creds)
+
+def get_recent_blogger_titles(service):
+    try:
+        res = service.posts().list(blogId=os.environ["BLOG_ID"], maxResults=25).execute()
+        return [p.get("title", "").lower() for p in res.get("items", [])]
+    except Exception as e:
+        print(f"⚠️ Could not fetch recent Blogger posts: {e}")
+        return []
+
+def is_duplicate_on_blogger(company_name, recent_titles):
+    comp_clean = re.sub(r"[^a-z0-9\s]", "", company_name.lower()).strip()
+    comp_words = [w for w in comp_clean.split() if len(w) > 2][:2]
+    if not comp_words:
+        return False
+    for t in recent_titles:
+        if all(w in t for w in comp_words):
+            return True
+    return False
+
+def extract_pdf_text(link):
+    if not link:
+        return ""
+    try:
+        resp = requests.get(link, headers=HEADERS, timeout=20)
+        content_type = resp.headers.get("Content-Type", "").lower()
+        if "pdf" in content_type or link.lower().endswith(".pdf"):
+            reader = PdfReader(io.BytesIO(resp.content))
+            extracted = []
+            for page in reader.pages[:4]:  # પ્રથમ 4 પેજમાંથી પૂરી વિગત ખેંચશે
+                txt = page.extract_text()
+                if txt:
+                    extracted.append(txt.strip())
+            full_text = "\n".join(extracted)
+            return full_text[:7000]  # Gemini માટે ક્લીન લિમિટ
+    except Exception as e:
+        print(f"⚠️ PDF extraction skipped/failed for {link}: {e}")
+    return ""
 
 def call_gemini_json(prompt, temperature=0.2):
     keys = [os.environ.get("GEMINI_API_KEY_1"), os.environ.get("GEMINI_API_KEY_2")]
@@ -185,7 +241,6 @@ def create_and_push_thumbnail(company_name, headline_short, sentiment, source_na
     out_path = os.path.join(THUMBNAIL_DIR, f"thumb_{file_hash}.jpg")
     base.convert("RGB").save(out_path, "JPEG", quality=92, optimize=True)
 
-    # પોસ્ટ પબ્લિશ થાય તે પહેલાં જ GitHub પર ફોટો પુશ કરો જેથી URL તરત લાઈવ થઈ જાય
     try:
         subprocess.run(["git", "config", "--local", "user.email", "action@github.com"], check=False)
         subprocess.run(["git", "config", "--local", "user.name", "MarketMunafa Bot"], check=False)
@@ -197,53 +252,54 @@ def create_and_push_thumbnail(company_name, headline_short, sentiment, source_na
         print(f"⚠️ Git push warning for thumbnail: {e}")
 
     repo = os.environ.get("GITHUB_REPO", "")
-    # jsDelivr CDN લિંક Google News અને Blogger બંનેમાં ફાસ્ટ લોડ થાય છે
     return f"https://cdn.jsdelivr.net/gh/{repo}@main/{out_path}"
 
 # ================= STRICT ITERATIVE QUALITY GATE =================
 def sanitize_non_default_headings(html_str):
-    # હિન્દી અને અંગ્રેજીમાં <h2> ને સ્ટાઈલ્ડ <div> માં ફેરવે છે જેથી થીમનું Quick Summary મિક્સ ન થાય
-    html_str = re.sub(
+    return re.sub(
         r"<h2[^>]*>(.*?)</h2>",
         r'<div style="font-size:21px; font-weight:800; color:#0f172a; margin:20px 0 10px;">\1</div>',
         html_str,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    return html_str
 
-def generate_and_strictly_verify(source, title, summary, link):
-    print("📝 Generating Initial SEO #1 Draft...")
-    draft_prompt = f"""
-You are a senior Indian stock market financial journalist for 'Market Munafa' (Google News & AdSense approved).
-Write a 100% original, copyright-free, human-like E-E-A-T news article based ONLY on this official exchange filing:
-
+def generate_and_strictly_verify(source, title, summary, pdf_text, link):
+    print("📝 Generating Detailed Draft from Official Filing + PDF...")
+    filing_context = f"""
 Source: {source}
 Title: {title}
-Details: {summary}
-Link: {link}
+RSS Summary: {summary}
+Official PDF Full Text:
+{pdf_text if pdf_text else "Not available in PDF; use RSS details only."}
+"""
+    draft_prompt = f"""
+You are a senior Indian stock market financial journalist for 'Market Munafa' (Google News & AdSense approved).
+Write a 100% original, deeply detailed, copyright-free news article using ALL concrete numbers and facts from the official PDF/filing below:
 
-STRICT WRITING RULES:
-- Use natural contemporary Indian financial terms (e.g. write 'ડેવલપમેન્ટ ઓર્ડર', 'ડિફેન્સ સેક્ટર', 'डेवलपमेंट ऑर्डर' — NEVER robotic literal translations like 'विकास ऑर्डर').
-- Zero invented share prices, targets, or fake numbers.
-- No markdown (** or ##) inside HTML. Use clean <h2>, <h3>, <p>, <ul>, <li>, <strong>.
+{filing_context}
+
+STRICT RULES:
+1. EXTRACT CONCRETE DETAILS: Always mention exact order value (₹ Crore/Lakh), client/awarding entity name, execution period, dividend ₹/share, record date, or exact SEBI penalty/order details from the PDF text! If a number is genuinely not disclosed in the PDF, explicitly state that the company has not disclosed the exact value.
+2. NATURAL LANGUAGE: Write fluent contemporary Gujarati, Hindi, and Indian English (NEVER robotic translations like 'विकास ऑर्डर').
+3. CLEAN HTML: Use <h2>, <h3>, <p>, <ul>, <li>, <strong>. Never use markdown (** or ##).
 
 Return ONLY valid JSON with these exact keys:
 {{
-  "seo_title_en": "High-CTR Google News SEO Title in English (60-78 chars)",
-  "meta_description": "Crisp 150-char English SEO meta summary",
+  "seo_title_en": "High-CTR Google News SEO Title in English with key number/order value if available (60-78 chars)",
+  "meta_description": "Crisp 150-char English SEO meta summary with key figures",
   "company_name": "Short Company Name (max 18 chars)",
-  "thumb_headline": "Short punchy 4-6 word English headline for thumbnail",
+  "thumb_headline": "Short punchy 4-6 word English headline for thumbnail (include ₹ value if available)",
   "sentiment": "POSITIVE or NEGATIVE or NEUTRAL",
   "impact_gu": "1 crisp natural Gujarati sentence on investor impact",
   "impact_hi": "1 crisp natural Hindi sentence on investor impact",
   "impact_en": "1 crisp natural Indian English sentence on investor impact",
   "tags": ["Stock Market", "NSE", "BSE", "Company Name", "Share News"],
-  "quick_story_gu": ["Point 1", "Point 2", "Point 3", "Point 4"],
-  "quick_story_hi": ["Point 1", "Point 2", "Point 3", "Point 4"],
-  "quick_story_en": ["Point 1", "Point 2", "Point 3", "Point 4"],
-  "gujarati_html": "Detailed, natural Gujarati HTML article (What Happened, Key Filing Details, Investor Impact, 2 FAQs)",
-  "hindi_html": "Detailed, natural Hindi HTML article with same structure",
-  "english_html": "Detailed, crisp Indian English HTML article with same structure"
+  "quick_story_gu": ["Point 1 with exact figures", "Point 2", "Point 3", "Point 4"],
+  "quick_story_hi": ["Point 1 with exact figures", "Point 2", "Point 3", "Point 4"],
+  "quick_story_en": ["Point 1 with exact figures", "Point 2", "Point 3", "Point 4"],
+  "gujarati_html": "Detailed Gujarati HTML article with exact PDF figures: What Happened, Full Filing/Order Details (table or bullets), Investor Impact, and 2 FAQs.",
+  "hindi_html": "Detailed Hindi HTML article with same rich structure and exact figures.",
+  "english_html": "Detailed Indian English HTML article with same rich structure and exact figures."
 }}
 """
     current_json_str = call_gemini_json(draft_prompt, temperature=0.25)
@@ -251,20 +307,19 @@ Return ONLY valid JSON with these exact keys:
     for attempt in range(1, MAX_AUDIT_ROUNDS + 1):
         print(f"🔍 Quality Audit Round {attempt}/{MAX_AUDIT_ROUNDS}...")
         audit_prompt = f"""
-You are the Ruthless Chief Editor of a top Google News & AdSense financial portal.
-Audit this JSON article strictly against the original exchange filing.
+You are the Ruthless Chief Editor of 'Market Munafa'. Audit this JSON article strictly against the Official Filing & PDF Text.
 
-Original Filing: {source} | {title} | {summary}
+{filing_context}
 
-Check ALL 5 criteria:
-1. 100% Factual Accuracy (zero hallucinated numbers/dates).
-2. Zero Robotic Translation (no awkward literal Hindi/Gujarati words like 'विकास ऑर्डर'; must read like a native Indian market journalist).
-3. Clean HTML (no markdown ** or ##, all tags properly closed).
-4. Complete Quick Story (4 crisp points in all 3 languages) and Impact lines in all 3 languages.
-5. High AdSense E-E-A-T & Google News #1 SEO quality.
+CHECK ALL 5 CRITERIA:
+1. FULL DETAILS INCLUDED: Did the article include the exact order amount, client name, execution timeline, or financial numbers from the PDF? If missing from the draft but present in the PDF, ADD THEM NOW!
+2. ZERO HALLUCINATION: Remove any number not present in the filing/PDF.
+3. NATURAL LANGUAGE: Fix any robotic Hindi/Gujarati phrasing.
+4. CLEAN HTML: No markdown (** or ##), all HTML tags properly closed.
+5. COMPLETE STRUCTURE: 4 crisp Quick Story points and Impact lines in all 3 languages.
 
-Fix ANY issue you find, then assign an honest "quality_score" (0 to 100) and "issues_found" list.
-Return ONLY valid JSON with all original keys PLUS "quality_score" (integer) and "issues_found" (list of strings).
+Fix ANY issue, then assign an honest "quality_score" (0 to 100) and "issues_found" list.
+Return ONLY valid JSON with all original keys PLUS "quality_score" (int) and "issues_found" (list).
 
 ARTICLE JSON TO AUDIT:
 {current_json_str}
@@ -272,10 +327,8 @@ ARTICLE JSON TO AUDIT:
         audited_str = call_gemini_json(audit_prompt, temperature=0.1)
         data = json.loads(audited_str)
         score = int(data.get("quality_score", 0))
-        issues = data.get("issues_found", [])
-        print(f"📊 Round {attempt} Score: {score}/100 | Issues: {issues}")
+        print(f"📊 Round {attempt} Score: {score}/100 | Issues: {data.get('issues_found', [])}")
 
-        # Python-level strict checks
         has_markdown_bug = any(
             "**" in str(data.get(k, "")) or "##" in str(data.get(k, ""))
             for k in ["gujarati_html", "hindi_html", "english_html"]
@@ -294,7 +347,7 @@ ARTICLE JSON TO AUDIT:
         current_json_str = audited_str
         time.sleep(2)
 
-    raise ValueError(f"Article rejected: Failed to reach {MIN_QUALITY_SCORE}/100 after {MAX_AUDIT_ROUNDS} audit rounds.")
+    raise ValueError(f"Article rejected: Failed to reach {MIN_QUALITY_SCORE}/100 after {MAX_AUDIT_ROUNDS} rounds.")
 
 # ================= BLOGGER HTML BUILDER =================
 def render_quick_story_box(points, heading, accent_color):
@@ -340,7 +393,7 @@ def build_blogger_html(data, thumb_url, source_name, official_link):
         }
     }, ensure_ascii=False)
 
-    html = f"""
+    return f"""
 <script type="application/ld+json">{schema_json}</script>
 
 <div style="font-family: 'Segoe UI', Roboto, Arial, sans-serif; line-height: 1.8; color: #1e293b;">
@@ -352,7 +405,6 @@ def build_blogger_html(data, thumb_url, source_name, official_link):
     {badge_label} &nbsp;|&nbsp; Source: {source_name}
   </div>
 
-  <!-- Language Switcher (Gujarati Default) -->
   <div style="display:flex; gap:10px; justify-content:center; margin-bottom:22px; flex-wrap:wrap;">
     <button onclick="switchLang('gu')" id="btn-gu" style="padding:10px 22px; border:none; border-radius:8px; background:#0f172a; color:#fff; font-weight:bold; cursor:pointer;">ગુજરાતી</button>
     <button onclick="switchLang('hi')" id="btn-hi" style="padding:10px 22px; border:none; border-radius:8px; background:#e2e8f0; color:#0f172a; font-weight:bold; cursor:pointer;">हिन्दी</button>
@@ -395,30 +447,12 @@ function switchLang(lang) {{
 }}
 </script>
 """
-    return html
-
-# ================= BLOGGER PUBLISHER =================
-def publish_to_blogger(title, html_content, labels):
-    creds = Credentials(
-        token=None,
-        refresh_token=os.environ["REFRESH_TOKEN"],
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=os.environ["CLIENT_ID"],
-        client_secret=os.environ["CLIENT_SECRET"],
-    )
-    service = build("blogger", "v3", credentials=creds)
-    body = {
-        "kind": "blogger#post",
-        "title": title,
-        "content": html_content,
-        "labels": labels[:8],
-    }
-    post = service.posts().insert(blogId=os.environ["BLOG_ID"], body=body, isDraft=False).execute()
-    print(f"✅ Published: {post.get('url')}")
 
 # ================= MAIN EXECUTION =================
 def main():
     history = load_history()
+    blogger_service = get_blogger_service()
+    recent_titles = get_recent_blogger_titles(blogger_service)
     published_count = 0
 
     for feed_info in FEEDS:
@@ -434,14 +468,30 @@ def main():
             title = entry.get("title", "").strip()
             link = entry.get("link", "").strip()
             summary = entry.get("summary", "") or entry.get("description", "")
-            uid = hashlib.md5(f"{title}|{link}".encode()).hexdigest()
 
-            if uid in history or not is_within_time_window(entry) or not is_important_news(title, summary):
+            uid = hashlib.md5(f"{title}|{link}".encode()).hexdigest()
+            company_day_key = normalize_company_key(title)
+
+            if uid in history or company_day_key in history:
+                continue
+            if not is_within_time_window(entry) or not is_important_news(title, summary):
                 continue
 
             print(f"🔥 Processing Important News: {title}")
             try:
-                article_data = generate_and_strictly_verify(feed_info["name"], title, summary, link)
+                pdf_text = extract_pdf_text(link)
+                print(f"📄 Extracted {len(pdf_text)} chars from official PDF.")
+
+                article_data = generate_and_strictly_verify(feed_info["name"], title, summary, pdf_text, link)
+
+                # બ્લોગર પર પહેલાંથી આ કંપનીની પોસ્ટ છે કે નહીં તેનો ફાઈનલ ચેક
+                if is_duplicate_on_blogger(article_data["company_name"], recent_titles):
+                    print(f"⏭️ Skipped duplicate company already on Blogger: {article_data['company_name']}")
+                    history.add(uid)
+                    history.add(company_day_key)
+                    save_history(history)
+                    continue
+
                 thumb_url = create_and_push_thumbnail(
                     article_data["company_name"],
                     article_data["thumb_headline"],
@@ -450,9 +500,19 @@ def main():
                     uid[:10],
                 )
                 post_html = build_blogger_html(article_data, thumb_url, feed_info["name"], link)
-                publish_to_blogger(article_data["seo_title_en"], post_html, article_data.get("tags", ["Stock Market"]))
 
+                body = {
+                    "kind": "blogger#post",
+                    "title": article_data["seo_title_en"],
+                    "content": post_html,
+                    "labels": article_data.get("tags", ["Stock Market"])[:8],
+                }
+                post = blogger_service.posts().insert(blogId=os.environ["BLOG_ID"], body=body, isDraft=False).execute()
+                print(f"✅ Published: {post.get('url')}")
+
+                recent_titles.append(article_data["seo_title_en"].lower())
                 history.add(uid)
+                history.add(company_day_key)
                 save_history(history)
                 published_count += 1
                 time.sleep(5)
