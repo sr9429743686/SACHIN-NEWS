@@ -8,12 +8,14 @@ import feedparser
 import numpy as np
 from datetime import datetime, timezone, timedelta
 from dateutil import parser as date_parser
-from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from google import genai
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 # ================= CONFIGURATION =================
+MODEL_NAME = "gemini-3.5-flash-lite"
+
 FEEDS = [
     {"name": "BSE Announcement", "url": "https://www.bseindia.com/data/xml/announcements.aspx"},
     {"name": "BSE Notice", "url": "https://www.bseindia.com/data/xml/notices.xml"},
@@ -22,15 +24,13 @@ FEEDS = [
     {"name": "SEBI Update", "url": "https://www.sebi.gov.in/sebirss.xml"},
 ]
 
-# માત્ર મહત્વપૂર્ણ ન્યૂઝ માટેના કીવર્ડ્સ
 IMPORTANT_KEYWORDS = [
     "dividend", "bonus", "split", "buyback", "merger", "acquisition", "order",
     "contract", "result", "profit", "revenue", "rights issue", "fund raising",
-    "qip", "ipo", "delisting", "sebi", "penalty", "order", "circular",
-    "expansion", "joint venture", "agreement", "capex", "allotment", "demerger"
+    "qip", "ipo", "delisting", "sebi", "penalty", "circular", "expansion",
+    "joint venture", "agreement", "capex", "allotment", "demerger"
 ]
 
-# નકામી/સામાન્ય નોટિસ દૂર કરવા માટે
 IGNORE_KEYWORDS = [
     "loss of share", "duplicate share", "trading window", "newspaper publication",
     "certificate under regulation 74", "reconciliation of share capital", "intimation of schedule"
@@ -39,7 +39,7 @@ IGNORE_KEYWORDS = [
 HISTORY_FILE = "posted_history.json"
 THUMBNAIL_DIR = "thumbnails"
 AUTHOR_IMG_PATH = "author.png"
-TIME_WINDOW_MINUTES = 15  # છેલ્લી 15 મિનિટના ન્યૂઝ
+TIME_WINDOW_MINUTES = 15
 
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
@@ -60,26 +60,22 @@ def save_history(history_set):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(list(history_set)[-500:], f, indent=2)
 
-def get_gemini_client():
+def call_gemini(prompt):
     keys = [os.environ.get("GEMINI_API_KEY_1"), os.environ.get("GEMINI_API_KEY_2")]
     keys = [k for k in keys if k]
     if not keys:
         raise ValueError("No GEMINI_API_KEY found in environment variables.")
-    return keys
-
-def call_gemini(prompt):
-    keys = get_gemini_client()
     last_err = None
     for key in keys:
         try:
             client = genai.Client(api_key=key)
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model=MODEL_NAME,
                 contents=prompt,
             )
             return response.text
         except Exception as e:
-            print(f"Gemini key error, trying next key: {e}")
+            print(f"Gemini key error ({MODEL_NAME}), trying next key: {e}")
             last_err = e
     raise RuntimeError(f"All Gemini keys failed: {last_err}")
 
@@ -90,7 +86,6 @@ def is_within_time_window(entry):
     try:
         dt = date_parser.parse(pub_str)
         if dt.tzinfo is None:
-            # ભારતીય ફીડ્સ સામાન્ય રીતે IST (+05:30) માં હોય છે
             ist = timezone(timedelta(hours=5, minutes=30))
             dt = dt.replace(tzinfo=ist)
         dt_utc = dt.astimezone(timezone.utc)
@@ -120,37 +115,30 @@ def add_sticker_outline(img, border_size=8, border_color=(255, 255, 255, 255)):
     dilated = alpha.filter(ImageFilter.MaxFilter(border_size * 2 + 1))
     outline = Image.new("RGBA", img.size, border_color)
     outline.putalpha(dilated)
-    combined = Image.alpha_composite(outline, img)
-    return combined
+    return Image.alpha_composite(outline, img)
 
 def create_hd_thumbnail(company_name, headline_short, sentiment, source_name, file_hash):
     W, H = 1280, 720
-    # 3D-feel Editorial Gradient Background
     base = Image.new("RGBA", (W, H), (244, 240, 234, 255))
     draw = ImageDraw.Draw(base)
 
-    # Color theme based on sentiment
     if sentiment == "POSITIVE":
-        accent = (16, 150, 72, 255)      # Deep Green
-        glow = (34, 197, 94, 60)
+        accent = (16, 150, 72, 255)
+        glow = (34, 197, 94, 65)
         badge_text = "POSITIVE NEWS"
     elif sentiment == "NEGATIVE":
-        accent = (210, 35, 42, 255)      # Deep Red
-        glow = (239, 68, 68, 60)
+        accent = (210, 35, 42, 255)
+        glow = (239, 68, 68, 65)
         badge_text = "NEGATIVE NEWS"
     else:
-        accent = (29, 78, 216, 255)      # Royal Blue
-        glow = (59, 130, 246, 60)
+        accent = (29, 78, 216, 255)
+        glow = (59, 130, 246, 65)
         badge_text = "IMPORTANT UPDATE"
 
-    # Subtle 3D geometric shapes & editorial arch behind portrait
     draw.ellipse([680, 70, 1230, 620], fill=glow)
-    draw.rounded_rectangle([40, 40, 680, 680], radius=32, fill=(255, 255, 255, 235), outline=accent, width=4)
-
-    # 3D Bottom podium bar
+    draw.rounded_rectangle([40, 40, 680, 680], radius=32, fill=(255, 255, 255, 240), outline=accent, width=4)
     draw.rounded_rectangle([710, 610, 1240, 680], radius=24, fill=(30, 41, 59, 255))
 
-    # Load Fonts (fallback to default if DejaVu not found)
     try:
         font_badge = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 34)
         font_comp = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 58)
@@ -159,18 +147,14 @@ def create_hd_thumbnail(company_name, headline_short, sentiment, source_name, fi
     except Exception:
         font_badge = font_comp = font_head = font_brand = ImageFont.load_default()
 
-    # Source Tag
-    draw.rounded_rectangle([80, 80, 420, 140], radius=14, fill=(15, 23, 42, 255))
+    draw.rounded_rectangle([80, 80, 440, 140], radius=14, fill=(15, 23, 42, 255))
     draw.text((105, 92), source_name.upper()[:18], fill=(255, 255, 255, 255), font=font_brand)
 
-    # Sentiment 3D Pill Badge
     draw.rounded_rectangle([80, 165, 480, 235], radius=18, fill=accent)
     draw.text((110, 180), badge_text, fill=(255, 255, 255, 255), font=font_badge)
 
-    # Company Name
     draw.text((80, 270), company_name[:20].upper(), fill=(15, 23, 42, 255), font=font_comp)
 
-    # Wrapped Short Headline
     words = headline_short.split()
     lines, cur = [], ""
     for w in words:
@@ -187,17 +171,14 @@ def create_hd_thumbnail(company_name, headline_short, sentiment, source_name, fi
         draw.text((80, y_text), line, fill=(51, 65, 85, 255), font=font_head)
         y_text += 55
 
-    # Brand Name on Bottom Podium
     draw.text((810, 628), "MARKET MUNAFA", fill=(255, 255, 255, 255), font=font_brand)
 
-    # Add Author Photo with White Sticker Border & Drop Shadow
     if os.path.exists(AUTHOR_IMG_PATH):
         author = Image.open(AUTHOR_IMG_PATH)
         author = remove_white_bg(author)
         author.thumbnail((520, 520), Image.Resampling.LANCZOS)
         author = add_sticker_outline(author, border_size=7)
 
-        # Drop shadow
         shadow = Image.new("RGBA", author.size, (0, 0, 0, 90))
         shadow.putalpha(author.split()[3])
         shadow = shadow.filter(ImageFilter.GaussianBlur(10))
@@ -213,44 +194,51 @@ def create_hd_thumbnail(company_name, headline_short, sentiment, source_name, fi
 
 # ================= GEMINI 2-STEP ARTICLE GENERATION =================
 def generate_and_verify_article(source, title, summary, link):
-    # STEP 1: Draft Generation
+    # STEP 1: SEO #1 + AdSense + Google News Draft with Quick Story
     draft_prompt = f"""
-You are a senior Indian stock market financial journalist writing for Google News and AdSense-approved portal 'Market Munafa'.
-Write a 100% original, copyright-free, deeply informative, SEO #1 ranking news article based on this official exchange filing:
+You are a senior Indian stock market financial journalist for 'Market Munafa' (Google News & AdSense approved).
+Write a 100% original, copyright-free, high-value E-E-A-T news article designed to rank #1 on Google and get instant Google News indexing.
 
+Official Exchange Filing:
 Source: {source}
 Title: {title}
 Details: {summary}
-Official Link: {link}
+Link: {link}
 
 Return ONLY valid JSON with these exact keys:
 {{
-  "seo_title_en": "Catchy Google News SEO Title in English (max 80 chars, include stock/entity name)",
+  "seo_title_en": "High-CTR Google News SEO Title in English (60-78 chars, include exact stock/entity name & key action)",
+  "meta_description": "Crisp 150-char English SEO meta summary",
   "company_name": "Short Company or Entity Name (max 18 chars)",
   "thumb_headline": "Short punchy 4-6 word English headline for thumbnail",
   "sentiment": "POSITIVE or NEGATIVE or NEUTRAL",
-  "sentiment_reason_gu": "1 line in Gujarati explaining why it is positive/negative/neutral for investors",
+  "sentiment_reason_gu": "1 clear line in Gujarati explaining why it is positive/negative/neutral for investors",
   "tags": ["Stock Market", "NSE", "BSE", "Company Name", "Share News"],
-  "gujarati_html": "Complete rich HTML article in natural Gujarati (keep numbers, stock names, and financial terms clear). Include: Key Highlights bullet box, Detailed Analysis, Impact on Investors, and 2 FAQs.",
-  "hindi_html": "Complete rich HTML article in natural Hindi with same structure.",
-  "english_html": "Complete rich HTML article in crisp Indian English with same structure."
+  "quick_story_gu": ["Point 1 in crisp Gujarati", "Point 2 in crisp Gujarati", "Point 3 in crisp Gujarati", "Point 4 in crisp Gujarati"],
+  "quick_story_hi": ["Point 1 in crisp Hindi", "Point 2 in crisp Hindi", "Point 3 in crisp Hindi", "Point 4 in crisp Hindi"],
+  "quick_story_en": ["Point 1 in crisp Indian English", "Point 2 in crisp Indian English", "Point 3 in crisp Indian English", "Point 4 in crisp Indian English"],
+  "gujarati_html": "Detailed, natural, copyright-free Gujarati HTML article (use <h2>, <h3>, <p>, <ul>, <li>, <strong>). Keep stock names & numbers clear. Include: What Happened, Key Financial/Filing Details, Investor Impact, and 2 FAQs.",
+  "hindi_html": "Complete natural Hindi HTML article with same rich structure.",
+  "english_html": "Complete crisp Indian English HTML article with same rich structure."
 }}
-Do not wrap JSON in markdown backticks if possible, or ensure clean JSON.
+Output ONLY pure JSON without markdown fences.
 """
     raw_draft = call_gemini(draft_prompt)
     clean_draft = re.sub(r"^```json|```$", "", raw_draft.strip(), flags=re.MULTILINE).strip()
 
-    # STEP 2: Double-Check & Proofreading Verification
+    # STEP 2: Chief Editor Double-Check & Proofreading
     verify_prompt = f"""
-You are the Chief Editor of a Google News approved Indian financial publication.
-Double-check the following JSON article against the original exchange filing.
+You are the Chief Editor of a top Google News & AdSense financial portal.
+Double-check the JSON below against the original exchange filing for 100% accuracy and zero errors.
+
 Original Filing: {source} | {title} | {summary}
 
-Check and fix:
-1. Zero factual errors or hallucinated numbers.
-2. Natural, fluent Gujarati, Hindi, and English (no robotic translation).
-3. Clean HTML tags (<h2>, <h3>, <p>, <ul>, <li>, <strong>) suitable for Blogger & AdSense.
-4. Ensure sentiment (POSITIVE / NEGATIVE / NEUTRAL) is accurate.
+Verify & Fix:
+1. Zero factual errors, zero hallucinated prices/dates/numbers.
+2. 100% original, natural Gujarati, Hindi, and English (no robotic translation or copied sentences).
+3. Quick Story arrays must have 4 crisp, high-impact bullet points in each language.
+4. Valid, clean HTML tags (<h2>, <h3>, <p>, <ul>, <li>, <strong>) with proper readability for AdSense.
+5. Accurate sentiment (POSITIVE / NEGATIVE / NEUTRAL).
 
 Return ONLY the final corrected valid JSON with the exact same keys.
 
@@ -261,7 +249,22 @@ DRAFT JSON:
     verified_clean = re.sub(r"^```json|```$", "", verified_raw.strip(), flags=re.MULTILINE).strip()
     return json.loads(verified_clean)
 
-# ================= BLOGGER HTML BUILDER =================
+# ================= BLOGGER HTML BUILDER (WITH QUICK STORY & SCHEMA) =================
+def render_quick_story_box(points, heading, accent_color):
+    items_html = "".join(
+        f"<li style='margin-bottom:8px; padding-left:4px;'>⚡ {pt}</li>" for pt in points
+    )
+    return f"""
+    <div style="background:linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%); border:1px solid #cbd5e1; border-left:6px solid {accent_color}; border-radius:12px; padding:16px 20px; margin-bottom:22px; box-shadow:0 4px 12px rgba(0,0,0,0.05);">
+      <div style="font-size:17px; font-weight:800; color:#0f172a; margin-bottom:10px;">
+        🚀 {heading} (15-Second Read)
+      </div>
+      <ul style="margin:0; padding-left:18px; list-style:none; font-size:15px; color:#1e293b;">
+        {items_html}
+      </ul>
+    </div>
+    """
+
 def build_blogger_html(data, thumb_url, source_name, official_link):
     sentiment = data["sentiment"].upper()
     if sentiment == "POSITIVE":
@@ -271,10 +274,35 @@ def build_blogger_html(data, thumb_url, source_name, official_link):
     else:
         badge_bg, badge_label = "#2563eb", "ℹ️ IMPORTANT MARKET UPDATE"
 
+    now_iso = datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
+
+    # Google News NewsArticle JSON-LD Schema for instant indexing & #1 SEO
+    schema_json = json.dumps({
+        "@context": "https://schema.org",
+        "@type": "NewsArticle",
+        "headline": data["seo_title_en"],
+        "description": data.get("meta_description", data["seo_title_en"]),
+        "image": [thumb_url],
+        "datePublished": now_iso,
+        "dateModified": now_iso,
+        "author": {"@type": "Person", "name": "Sachin Patel"},
+        "publisher": {
+            "@type": "Organization",
+            "name": "Market Munafa",
+            "logo": {"@type": "ImageObject", "url": thumb_url}
+        }
+    }, ensure_ascii=False)
+
+    qs_gu = render_quick_story_box(data.get("quick_story_gu", []), "ક્વિક સ્ટોરી — મુખ્ય મુદ્દાઓ", badge_bg)
+    qs_hi = render_quick_story_box(data.get("quick_story_hi", []), "क्विक स्टोरी — मुख्य बातें", badge_bg)
+    qs_en = render_quick_story_box(data.get("quick_story_en", []), "Quick Story — Key Highlights", badge_bg)
+
     html = f"""
-<div style="font-family: 'Segoe UI', Roboto, sans-serif; line-height: 1.75; color: #1e293b;">
+<script type="application/ld+json">{schema_json}</script>
+
+<div style="font-family: 'Segoe UI', Roboto, Arial, sans-serif; line-height: 1.8; color: #1e293b;">
   <div style="text-align:center; margin-bottom:18px;">
-    <img src="{thumb_url}" alt="{data['seo_title_en']}" style="width:100%; max-width:800px; border-radius:14px; box-shadow:0 8px 24px rgba(0,0,0,0.12);" />
+    <img src="{thumb_url}" alt="{data['seo_title_en']}" width="1280" height="720" style="width:100%; max-width:800px; height:auto; border-radius:14px; box-shadow:0 8px 24px rgba(0,0,0,0.12);" />
   </div>
 
   <div style="background:{badge_bg}; color:#ffffff; padding:12px 18px; border-radius:10px; font-weight:bold; font-size:16px; margin-bottom:16px; text-align:center;">
@@ -285,28 +313,31 @@ def build_blogger_html(data, thumb_url, source_name, official_link):
     <strong>રોકાણકારો માટે અસર:</strong> {data.get('sentiment_reason_gu', '')}
   </div>
 
-  <!-- Language Switcher -->
+  <!-- Language Switcher (Gujarati Default) -->
   <div style="display:flex; gap:10px; justify-content:center; margin-bottom:22px; flex-wrap:wrap;">
-    <button onclick="switchLang('gu')" id="btn-gu" style="padding:10px 20px; border:none; border-radius:8px; background:#0f172a; color:#fff; font-weight:bold; cursor:pointer;">ગુજરાતી</button>
-    <button onclick="switchLang('hi')" id="btn-hi" style="padding:10px 20px; border:none; border-radius:8px; background:#e2e8f0; color:#0f172a; font-weight:bold; cursor:pointer;">हिन्दी</button>
-    <button onclick="switchLang('en')" id="btn-en" style="padding:10px 20px; border:none; border-radius:8px; background:#e2e8f0; color:#0f172a; font-weight:bold; cursor:pointer;">English</button>
+    <button onclick="switchLang('gu')" id="btn-gu" style="padding:10px 22px; border:none; border-radius:8px; background:#0f172a; color:#fff; font-weight:bold; cursor:pointer;">ગુજરાતી</button>
+    <button onclick="switchLang('hi')" id="btn-hi" style="padding:10px 22px; border:none; border-radius:8px; background:#e2e8f0; color:#0f172a; font-weight:bold; cursor:pointer;">हिन्दी</button>
+    <button onclick="switchLang('en')" id="btn-en" style="padding:10px 22px; border:none; border-radius:8px; background:#e2e8f0; color:#0f172a; font-weight:bold; cursor:pointer;">English</button>
   </div>
 
   <div id="lang-gu" style="display:block;">
+    {qs_gu}
     {data['gujarati_html']}
   </div>
   <div id="lang-hi" style="display:none;">
+    {qs_hi}
     {data['hindi_html']}
   </div>
   <div id="lang-en" style="display:none;">
+    {qs_en}
     {data['english_html']}
   </div>
 
   <hr style="margin:24px 0; border:0; border-top:1px solid #cbd5e1;" />
-  <p style="font-size:13px; color:#64748b;">
+  <div style="background:#f1f5f9; padding:14px 16px; border-radius:10px; font-size:13px; color:#475569;">
     <strong>Official Exchange Reference:</strong> <a href="{official_link}" target="_blank" rel="nofollow noopener">View Official {source_name} Filing</a><br/>
-    <em>Disclaimer: આ માહિતી માત્ર શૈક્ષણિક અને ન્યૂઝ હેતુ માટે છે. રોકાણ કરતા પહેલા તમારા SEBI રજિસ્ટર્ડ સલાહકારની સલાહ લો.</em>
-  </p>
+    <strong>Editorial Note (Market Munafa):</strong> આ આર્ટિકલ સત્તાવાર એક્સચેન્જ ફાઈલિંગના આધારે તૈયાર કરવામાં આવ્યો છે. આ કોઈ રોકાણની સલાહ નથી; રોકાણ કરતા પહેલા તમારા SEBI રજિસ્ટર્ડ સલાહકારની સલાહ લો.
+  </div>
 </div>
 
 <script>
