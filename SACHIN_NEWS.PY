@@ -23,6 +23,8 @@ MIN_QUALITY_SCORE = 95
 MAX_AUDIT_ROUNDS = 3
 TIME_WINDOW_MINUTES = 15
 
+SITE_LOGO_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgXG-GojgyTIZWy4ftRRsgpLsDMxrAEKCRb_BnZsfVTKT0_T9IELdKQYKgACOQkhus69xfx_xg-iVyLvP2-RAki8voVBwja88Dfsg_tQRQR7JvgegMGFfEQfm73oO00WeTo1vPUHghTXmXd_by6k0C-m3Y_5JhoYEjUF8Y8V3KKTbGnUn53dUY-6AN32_A/s1254/1001173067.png"
+
 FEEDS = [
     {"name": "NSE Announcement", "url": "https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml"},
     {"name": "BSE Announcement", "url": "https://www.bseindia.com/data/xml/announcements.aspx"},
@@ -67,7 +69,6 @@ def save_history(history_set):
         json.dump(list(history_set)[-500:], f, indent=2)
 
 def normalize_company_key(text):
-    # NSE અને BSE બંને પરથી એક જ કંપનીના ડુપ્લિકેટ ન્યૂઝ રોકવા માટે
     clean = re.sub(r"[^a-z0-9\s]", " ", text.lower())
     words = [w for w in clean.split() if w not in {"limited", "ltd", "india", "ind", "private", "pvt", "the", "of", "and"}]
     today_str = datetime.now(timezone(timedelta(hours=5, minutes=30))).strftime("%Y-%m-%d")
@@ -110,12 +111,12 @@ def extract_pdf_text(link):
         if "pdf" in content_type or link.lower().endswith(".pdf"):
             reader = PdfReader(io.BytesIO(resp.content))
             extracted = []
-            for page in reader.pages[:4]:  # પ્રથમ 4 પેજમાંથી પૂરી વિગત ખેંચશે
+            for page in reader.pages[:4]:
                 txt = page.extract_text()
                 if txt:
                     extracted.append(txt.strip())
             full_text = "\n".join(extracted)
-            return full_text[:7000]  # Gemini માટે ક્લીન લિમિટ
+            return full_text[:7000]
     except Exception as e:
         print(f"⚠️ PDF extraction skipped/failed for {link}: {e}")
     return ""
@@ -385,11 +386,11 @@ def build_blogger_html(data, thumb_url, source_name, official_link):
         "image": [thumb_url],
         "datePublished": now_iso,
         "dateModified": now_iso,
-        "author": {"@type": "Person", "name": "Sachin Patel"},
+        "author": {"@type": "Organization", "name": "Market Munafa", "url": "https://marketmunafa.blogspot.com/"},
         "publisher": {
             "@type": "Organization",
             "name": "Market Munafa",
-            "logo": {"@type": "ImageObject", "url": thumb_url}
+            "logo": {"@type": "ImageObject", "url": SITE_LOGO_URL}
         }
     }, ensure_ascii=False)
 
@@ -405,25 +406,25 @@ def build_blogger_html(data, thumb_url, source_name, official_link):
     {badge_label} &nbsp;|&nbsp; Source: {source_name}
   </div>
 
-  <div style="display:flex; gap:10px; justify-content:center; margin-bottom:22px; flex-wrap:wrap;">
-    <button onclick="switchLang('gu')" id="btn-gu" style="padding:10px 22px; border:none; border-radius:8px; background:#0f172a; color:#fff; font-weight:bold; cursor:pointer;">ગુજરાતી</button>
-    <button onclick="switchLang('hi')" id="btn-hi" style="padding:10px 22px; border:none; border-radius:8px; background:#e2e8f0; color:#0f172a; font-weight:bold; cursor:pointer;">हिन्दी</button>
-    <button onclick="switchLang('en')" id="btn-en" style="padding:10px 22px; border:none; border-radius:8px; background:#e2e8f0; color:#0f172a; font-weight:bold; cursor:pointer;">English</button>
+  <div class="mm-langbar" style="display:flex; gap:10px; justify-content:center; margin-bottom:22px; flex-wrap:wrap;">
+    <button class="mm-lbtn" onclick="switchLang('gu')" id="btn-gu" style="padding:10px 22px; border:none; border-radius:8px; background:#0f172a; color:#fff; font-weight:bold; cursor:pointer;">ગુજરાતી</button>
+    <button class="mm-lbtn" onclick="switchLang('hi')" id="btn-hi" style="padding:10px 22px; border:none; border-radius:8px; background:#e2e8f0; color:#0f172a; font-weight:bold; cursor:pointer;">हिन्दी</button>
+    <button class="mm-lbtn" onclick="switchLang('en')" id="btn-en" style="padding:10px 22px; border:none; border-radius:8px; background:#e2e8f0; color:#0f172a; font-weight:bold; cursor:pointer;">English</button>
   </div>
 
-  <div id="lang-gu" style="display:block;">
+  <div id="lang-gu" class="mm-lang-pane" data-lang="gu" style="display:block;">
     {render_impact_box("રોકાણકારો માટે અસર", data.get("impact_gu", ""), badge_bg)}
     {render_quick_story_box(data.get("quick_story_gu", []), "ક્વિક સ્ટોરી — મુખ્ય મુદ્દાઓ", badge_bg)}
     {data['gujarati_html']}
   </div>
 
-  <div id="lang-hi" style="display:none;">
+  <div id="lang-hi" class="mm-lang-pane" data-lang="hi" style="display:none;">
     {render_impact_box("निवेशकों पर असर", data.get("impact_hi", ""), badge_bg)}
     {render_quick_story_box(data.get("quick_story_hi", []), "क्विक स्टोरी — मुख्य बातें", badge_bg)}
     {data['hindi_html']}
   </div>
 
-  <div id="lang-en" style="display:none;">
+  <div id="lang-en" class="mm-lang-pane" data-lang="en" style="display:none;">
     {render_impact_box("Impact on Investors", data.get("impact_en", ""), badge_bg)}
     {render_quick_story_box(data.get("quick_story_en", []), "Quick Story — Key Highlights", badge_bg)}
     {data['english_html']}
@@ -484,7 +485,6 @@ def main():
 
                 article_data = generate_and_strictly_verify(feed_info["name"], title, summary, pdf_text, link)
 
-                # બ્લોગર પર પહેલાંથી આ કંપનીની પોસ્ટ છે કે નહીં તેનો ફાઈનલ ચેક
                 if is_duplicate_on_blogger(article_data["company_name"], recent_titles):
                     print(f"⏭️ Skipped duplicate company already on Blogger: {article_data['company_name']}")
                     history.add(uid)
