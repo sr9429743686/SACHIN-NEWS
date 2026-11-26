@@ -1,0 +1,9 @@
+requests
+feedparser
+google-genai
+google-auth
+google-auth-oauthlib
+google-api-python-client
+Pillow
+numpy
+python-dateutil
