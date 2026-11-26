@@ -3,6 +3,7 @@ import re
 import json
 import time
 import hashlib
+import subprocess
 import requests
 import feedparser
 import numpy as np
@@ -10,11 +11,15 @@ from datetime import datetime, timezone, timedelta
 from dateutil import parser as date_parser
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from google import genai
+from google.genai import types
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 # ================= CONFIGURATION =================
 MODEL_NAME = "gemini-3.5-flash-lite"
+MIN_QUALITY_SCORE = 95       # 95/100 થી ઓછો સ્કોર હોય તો પોસ્ટ નહીં થાય
+MAX_AUDIT_ROUNDS = 3         # જ્યાં સુધી પરફેક્ટ ન થાય ત્યાં સુધી 3 રાઉન્ડ ચેક
+TIME_WINDOW_MINUTES = 15     # છેલ્લી 15 મિનિટના ન્યૂઝ
 
 FEEDS = [
     {"name": "BSE Announcement", "url": "https://www.bseindia.com/data/xml/announcements.aspx"},
@@ -39,7 +44,6 @@ IGNORE_KEYWORDS = [
 HISTORY_FILE = "posted_history.json"
 THUMBNAIL_DIR = "thumbnails"
 AUTHOR_IMG_PATH = "author.png"
-TIME_WINDOW_MINUTES = 15
 
 os.makedirs(THUMBNAIL_DIR, exist_ok=True)
 
@@ -60,11 +64,11 @@ def save_history(history_set):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(list(history_set)[-500:], f, indent=2)
 
-def call_gemini(prompt):
+def call_gemini_json(prompt, temperature=0.2):
     keys = [os.environ.get("GEMINI_API_KEY_1"), os.environ.get("GEMINI_API_KEY_2")]
     keys = [k for k in keys if k]
     if not keys:
-        raise ValueError("No GEMINI_API_KEY found in environment variables.")
+        raise ValueError("No GEMINI_API_KEY found.")
     last_err = None
     for key in keys:
         try:
@@ -72,10 +76,14 @@ def call_gemini(prompt):
             response = client.models.generate_content(
                 model=MODEL_NAME,
                 contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=temperature,
+                ),
             )
             return response.text
         except Exception as e:
-            print(f"Gemini key error ({MODEL_NAME}), trying next key: {e}")
+            print(f"Gemini key error, trying next: {e}")
             last_err = e
     raise RuntimeError(f"All Gemini keys failed: {last_err}")
 
@@ -86,11 +94,8 @@ def is_within_time_window(entry):
     try:
         dt = date_parser.parse(pub_str)
         if dt.tzinfo is None:
-            ist = timezone(timedelta(hours=5, minutes=30))
-            dt = dt.replace(tzinfo=ist)
-        dt_utc = dt.astimezone(timezone.utc)
-        now_utc = datetime.now(timezone.utc)
-        diff_minutes = (now_utc - dt_utc).total_seconds() / 60.0
+            dt = dt.replace(tzinfo=timezone(timedelta(hours=5, minutes=30)))
+        diff_minutes = (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds() / 60.0
         return -2 <= diff_minutes <= TIME_WINDOW_MINUTES
     except Exception:
         return False
@@ -101,53 +106,46 @@ def is_important_news(title, summary):
         return False
     return any(good in text for good in IMPORTANT_KEYWORDS)
 
-# ================= THUMBNAIL GENERATOR (HD 3D STYLE) =================
+# ================= THUMBNAIL GENERATOR + INSTANT GIT PUSH =================
 def remove_white_bg(img):
     img = img.convert("RGBA")
     data = np.array(img)
-    r, g, b, a = data[:, :, 0], data[:, :, 1], data[:, :, 2], data[:, :, 3]
-    white_mask = (r > 235) & (g > 235) & (b > 235)
-    data[white_mask, 3] = 0
+    r, g, b = data[:, :, 0], data[:, :, 1], data[:, :, 2]
+    data[(r > 235) & (g > 235) & (b > 235), 3] = 0
     return Image.fromarray(data)
 
-def add_sticker_outline(img, border_size=8, border_color=(255, 255, 255, 255)):
+def add_sticker_outline(img, border_size=7, border_color=(255, 255, 255, 255)):
     alpha = img.split()[3]
     dilated = alpha.filter(ImageFilter.MaxFilter(border_size * 2 + 1))
     outline = Image.new("RGBA", img.size, border_color)
     outline.putalpha(dilated)
     return Image.alpha_composite(outline, img)
 
-def create_hd_thumbnail(company_name, headline_short, sentiment, source_name, file_hash):
+def create_and_push_thumbnail(company_name, headline_short, sentiment, source_name, file_hash):
     W, H = 1280, 720
     base = Image.new("RGBA", (W, H), (244, 240, 234, 255))
     draw = ImageDraw.Draw(base)
 
     if sentiment == "POSITIVE":
-        accent = (16, 150, 72, 255)
-        glow = (34, 197, 94, 65)
-        badge_text = "POSITIVE NEWS"
+        accent, glow, badge_text = (16, 150, 72, 255), (34, 197, 94, 70), "POSITIVE NEWS"
     elif sentiment == "NEGATIVE":
-        accent = (210, 35, 42, 255)
-        glow = (239, 68, 68, 65)
-        badge_text = "NEGATIVE NEWS"
+        accent, glow, badge_text = (210, 35, 42, 255), (239, 68, 68, 70), "NEGATIVE NEWS"
     else:
-        accent = (29, 78, 216, 255)
-        glow = (59, 130, 246, 65)
-        badge_text = "IMPORTANT UPDATE"
+        accent, glow, badge_text = (29, 78, 216, 255), (59, 130, 246, 70), "IMPORTANT UPDATE"
 
     draw.ellipse([680, 70, 1230, 620], fill=glow)
-    draw.rounded_rectangle([40, 40, 680, 680], radius=32, fill=(255, 255, 255, 240), outline=accent, width=4)
-    draw.rounded_rectangle([710, 610, 1240, 680], radius=24, fill=(30, 41, 59, 255))
+    draw.rounded_rectangle([40, 40, 680, 680], radius=32, fill=(255, 255, 255, 242), outline=accent, width=5)
+    draw.rounded_rectangle([710, 610, 1240, 680], radius=24, fill=(15, 23, 42, 255))
 
     try:
         font_badge = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 34)
-        font_comp = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 58)
-        font_head = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 40)
+        font_comp = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 56)
+        font_head = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 38)
         font_brand = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
     except Exception:
         font_badge = font_comp = font_head = font_brand = ImageFont.load_default()
 
-    draw.rounded_rectangle([80, 80, 440, 140], radius=14, fill=(15, 23, 42, 255))
+    draw.rounded_rectangle([80, 80, 460, 140], radius=14, fill=(15, 23, 42, 255))
     draw.text((105, 92), source_name.upper()[:18], fill=(255, 255, 255, 255), font=font_brand)
 
     draw.rounded_rectangle([80, 165, 480, 235], radius=18, fill=accent)
@@ -155,8 +153,7 @@ def create_hd_thumbnail(company_name, headline_short, sentiment, source_name, fi
 
     draw.text((80, 270), company_name[:20].upper(), fill=(15, 23, 42, 255), font=font_comp)
 
-    words = headline_short.split()
-    lines, cur = [], ""
+    words, lines, cur = headline_short.split(), [], ""
     for w in words:
         if len(cur + " " + w) <= 24:
             cur = (cur + " " + w).strip()
@@ -171,102 +168,153 @@ def create_hd_thumbnail(company_name, headline_short, sentiment, source_name, fi
         draw.text((80, y_text), line, fill=(51, 65, 85, 255), font=font_head)
         y_text += 55
 
-    draw.text((810, 628), "MARKET MUNAFA", fill=(255, 255, 255, 255), font=font_brand)
+    draw.text((815, 628), "MARKET MUNAFA", fill=(255, 255, 255, 255), font=font_brand)
 
     if os.path.exists(AUTHOR_IMG_PATH):
         author = Image.open(AUTHOR_IMG_PATH)
         author = remove_white_bg(author)
         author.thumbnail((520, 520), Image.Resampling.LANCZOS)
         author = add_sticker_outline(author, border_size=7)
-
-        shadow = Image.new("RGBA", author.size, (0, 0, 0, 90))
+        shadow = Image.new("RGBA", author.size, (0, 0, 0, 95))
         shadow.putalpha(author.split()[3])
         shadow = shadow.filter(ImageFilter.GaussianBlur(10))
-
-        pos_x = 730
-        pos_y = 615 - author.height
+        pos_x, pos_y = 730, 615 - author.height
         base.paste(shadow, (pos_x + 10, pos_y + 10), shadow)
         base.paste(author, (pos_x, pos_y), author)
 
     out_path = os.path.join(THUMBNAIL_DIR, f"thumb_{file_hash}.jpg")
-    base.convert("RGB").save(out_path, "JPEG", quality=95)
-    return out_path
+    base.convert("RGB").save(out_path, "JPEG", quality=92, optimize=True)
 
-# ================= GEMINI 2-STEP ARTICLE GENERATION =================
-def generate_and_verify_article(source, title, summary, link):
-    # STEP 1: SEO #1 + AdSense + Google News Draft with Quick Story
+    # પોસ્ટ પબ્લિશ થાય તે પહેલાં જ GitHub પર ફોટો પુશ કરો જેથી URL તરત લાઈવ થઈ જાય
+    try:
+        subprocess.run(["git", "config", "--local", "user.email", "action@github.com"], check=False)
+        subprocess.run(["git", "config", "--local", "user.name", "MarketMunafa Bot"], check=False)
+        subprocess.run(["git", "add", out_path], check=True)
+        subprocess.run(["git", "commit", "-m", f"Add thumbnail {file_hash}"], check=False)
+        subprocess.run(["git", "push"], check=True)
+        time.sleep(3)
+    except Exception as e:
+        print(f"⚠️ Git push warning for thumbnail: {e}")
+
+    repo = os.environ.get("GITHUB_REPO", "")
+    # jsDelivr CDN લિંક Google News અને Blogger બંનેમાં ફાસ્ટ લોડ થાય છે
+    return f"https://cdn.jsdelivr.net/gh/{repo}@main/{out_path}"
+
+# ================= STRICT ITERATIVE QUALITY GATE =================
+def sanitize_non_default_headings(html_str):
+    # હિન્દી અને અંગ્રેજીમાં <h2> ને સ્ટાઈલ્ડ <div> માં ફેરવે છે જેથી થીમનું Quick Summary મિક્સ ન થાય
+    html_str = re.sub(
+        r"<h2[^>]*>(.*?)</h2>",
+        r'<div style="font-size:21px; font-weight:800; color:#0f172a; margin:20px 0 10px;">\1</div>',
+        html_str,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return html_str
+
+def generate_and_strictly_verify(source, title, summary, link):
+    print("📝 Generating Initial SEO #1 Draft...")
     draft_prompt = f"""
 You are a senior Indian stock market financial journalist for 'Market Munafa' (Google News & AdSense approved).
-Write a 100% original, copyright-free, high-value E-E-A-T news article designed to rank #1 on Google and get instant Google News indexing.
+Write a 100% original, copyright-free, human-like E-E-A-T news article based ONLY on this official exchange filing:
 
-Official Exchange Filing:
 Source: {source}
 Title: {title}
 Details: {summary}
 Link: {link}
 
+STRICT WRITING RULES:
+- Use natural contemporary Indian financial terms (e.g. write 'ડેવલપમેન્ટ ઓર્ડર', 'ડિફેન્સ સેક્ટર', 'डेवलपमेंट ऑर्डर' — NEVER robotic literal translations like 'विकास ऑर्डर').
+- Zero invented share prices, targets, or fake numbers.
+- No markdown (** or ##) inside HTML. Use clean <h2>, <h3>, <p>, <ul>, <li>, <strong>.
+
 Return ONLY valid JSON with these exact keys:
 {{
-  "seo_title_en": "High-CTR Google News SEO Title in English (60-78 chars, include exact stock/entity name & key action)",
+  "seo_title_en": "High-CTR Google News SEO Title in English (60-78 chars)",
   "meta_description": "Crisp 150-char English SEO meta summary",
-  "company_name": "Short Company or Entity Name (max 18 chars)",
+  "company_name": "Short Company Name (max 18 chars)",
   "thumb_headline": "Short punchy 4-6 word English headline for thumbnail",
   "sentiment": "POSITIVE or NEGATIVE or NEUTRAL",
-  "sentiment_reason_gu": "1 clear line in Gujarati explaining why it is positive/negative/neutral for investors",
+  "impact_gu": "1 crisp natural Gujarati sentence on investor impact",
+  "impact_hi": "1 crisp natural Hindi sentence on investor impact",
+  "impact_en": "1 crisp natural Indian English sentence on investor impact",
   "tags": ["Stock Market", "NSE", "BSE", "Company Name", "Share News"],
-  "quick_story_gu": ["Point 1 in crisp Gujarati", "Point 2 in crisp Gujarati", "Point 3 in crisp Gujarati", "Point 4 in crisp Gujarati"],
-  "quick_story_hi": ["Point 1 in crisp Hindi", "Point 2 in crisp Hindi", "Point 3 in crisp Hindi", "Point 4 in crisp Hindi"],
-  "quick_story_en": ["Point 1 in crisp Indian English", "Point 2 in crisp Indian English", "Point 3 in crisp Indian English", "Point 4 in crisp Indian English"],
-  "gujarati_html": "Detailed, natural, copyright-free Gujarati HTML article (use <h2>, <h3>, <p>, <ul>, <li>, <strong>). Keep stock names & numbers clear. Include: What Happened, Key Financial/Filing Details, Investor Impact, and 2 FAQs.",
-  "hindi_html": "Complete natural Hindi HTML article with same rich structure.",
-  "english_html": "Complete crisp Indian English HTML article with same rich structure."
+  "quick_story_gu": ["Point 1", "Point 2", "Point 3", "Point 4"],
+  "quick_story_hi": ["Point 1", "Point 2", "Point 3", "Point 4"],
+  "quick_story_en": ["Point 1", "Point 2", "Point 3", "Point 4"],
+  "gujarati_html": "Detailed, natural Gujarati HTML article (What Happened, Key Filing Details, Investor Impact, 2 FAQs)",
+  "hindi_html": "Detailed, natural Hindi HTML article with same structure",
+  "english_html": "Detailed, crisp Indian English HTML article with same structure"
 }}
-Output ONLY pure JSON without markdown fences.
 """
-    raw_draft = call_gemini(draft_prompt)
-    clean_draft = re.sub(r"^```json|```$", "", raw_draft.strip(), flags=re.MULTILINE).strip()
+    current_json_str = call_gemini_json(draft_prompt, temperature=0.25)
 
-    # STEP 2: Chief Editor Double-Check & Proofreading
-    verify_prompt = f"""
-You are the Chief Editor of a top Google News & AdSense financial portal.
-Double-check the JSON below against the original exchange filing for 100% accuracy and zero errors.
+    for attempt in range(1, MAX_AUDIT_ROUNDS + 1):
+        print(f"🔍 Quality Audit Round {attempt}/{MAX_AUDIT_ROUNDS}...")
+        audit_prompt = f"""
+You are the Ruthless Chief Editor of a top Google News & AdSense financial portal.
+Audit this JSON article strictly against the original exchange filing.
 
 Original Filing: {source} | {title} | {summary}
 
-Verify & Fix:
-1. Zero factual errors, zero hallucinated prices/dates/numbers.
-2. 100% original, natural Gujarati, Hindi, and English (no robotic translation or copied sentences).
-3. Quick Story arrays must have 4 crisp, high-impact bullet points in each language.
-4. Valid, clean HTML tags (<h2>, <h3>, <p>, <ul>, <li>, <strong>) with proper readability for AdSense.
-5. Accurate sentiment (POSITIVE / NEGATIVE / NEUTRAL).
+Check ALL 5 criteria:
+1. 100% Factual Accuracy (zero hallucinated numbers/dates).
+2. Zero Robotic Translation (no awkward literal Hindi/Gujarati words like 'विकास ऑर्डर'; must read like a native Indian market journalist).
+3. Clean HTML (no markdown ** or ##, all tags properly closed).
+4. Complete Quick Story (4 crisp points in all 3 languages) and Impact lines in all 3 languages.
+5. High AdSense E-E-A-T & Google News #1 SEO quality.
 
-Return ONLY the final corrected valid JSON with the exact same keys.
+Fix ANY issue you find, then assign an honest "quality_score" (0 to 100) and "issues_found" list.
+Return ONLY valid JSON with all original keys PLUS "quality_score" (integer) and "issues_found" (list of strings).
 
-DRAFT JSON:
-{clean_draft}
+ARTICLE JSON TO AUDIT:
+{current_json_str}
 """
-    verified_raw = call_gemini(verify_prompt)
-    verified_clean = re.sub(r"^```json|```$", "", verified_raw.strip(), flags=re.MULTILINE).strip()
-    return json.loads(verified_clean)
+        audited_str = call_gemini_json(audit_prompt, temperature=0.1)
+        data = json.loads(audited_str)
+        score = int(data.get("quality_score", 0))
+        issues = data.get("issues_found", [])
+        print(f"📊 Round {attempt} Score: {score}/100 | Issues: {issues}")
 
-# ================= BLOGGER HTML BUILDER (WITH QUICK STORY & SCHEMA) =================
+        # Python-level strict checks
+        has_markdown_bug = any(
+            "**" in str(data.get(k, "")) or "##" in str(data.get(k, ""))
+            for k in ["gujarati_html", "hindi_html", "english_html"]
+        )
+        all_langs_ok = all(
+            len(str(data.get(k, ""))) >= 300
+            for k in ["gujarati_html", "hindi_html", "english_html"]
+        )
+
+        if score >= MIN_QUALITY_SCORE and not has_markdown_bug and all_langs_ok:
+            print(f"✅ PASSED Quality Gate with {score}/100!")
+            data["hindi_html"] = sanitize_non_default_headings(data["hindi_html"])
+            data["english_html"] = sanitize_non_default_headings(data["english_html"])
+            return data
+
+        current_json_str = audited_str
+        time.sleep(2)
+
+    raise ValueError(f"Article rejected: Failed to reach {MIN_QUALITY_SCORE}/100 after {MAX_AUDIT_ROUNDS} audit rounds.")
+
+# ================= BLOGGER HTML BUILDER =================
 def render_quick_story_box(points, heading, accent_color):
-    items_html = "".join(
-        f"<li style='margin-bottom:8px; padding-left:4px;'>⚡ {pt}</li>" for pt in points
-    )
+    items_html = "".join(f"<li style='margin-bottom:8px;'>⚡ {pt}</li>" for pt in points)
     return f"""
-    <div style="background:linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%); border:1px solid #cbd5e1; border-left:6px solid {accent_color}; border-radius:12px; padding:16px 20px; margin-bottom:22px; box-shadow:0 4px 12px rgba(0,0,0,0.05);">
-      <div style="font-size:17px; font-weight:800; color:#0f172a; margin-bottom:10px;">
-        🚀 {heading} (15-Second Read)
-      </div>
-      <ul style="margin:0; padding-left:18px; list-style:none; font-size:15px; color:#1e293b;">
-        {items_html}
-      </ul>
+    <div style="background:linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%); border:1px solid #cbd5e1; border-left:6px solid {accent_color}; border-radius:12px; padding:16px 20px; margin-bottom:22px;">
+      <div style="font-size:17px; font-weight:800; color:#0f172a; margin-bottom:10px;">🚀 {heading}</div>
+      <ul style="margin:0; padding-left:14px; list-style:none; font-size:15px; color:#1e293b;">{items_html}</ul>
+    </div>
+    """
+
+def render_impact_box(label, text, accent_color):
+    return f"""
+    <div style="background:#f8fafc; border-left:5px solid {accent_color}; padding:12px 16px; border-radius:6px; margin-bottom:18px; font-size:15px;">
+      <strong>{label}:</strong> {text}
     </div>
     """
 
 def build_blogger_html(data, thumb_url, source_name, official_link):
-    sentiment = data["sentiment"].upper()
+    sentiment = data.get("sentiment", "NEUTRAL").upper()
     if sentiment == "POSITIVE":
         badge_bg, badge_label = "#16a34a", "📈 POSITIVE / BULLISH NEWS"
     elif sentiment == "NEGATIVE":
@@ -276,7 +324,6 @@ def build_blogger_html(data, thumb_url, source_name, official_link):
 
     now_iso = datetime.now(timezone(timedelta(hours=5, minutes=30))).isoformat()
 
-    # Google News NewsArticle JSON-LD Schema for instant indexing & #1 SEO
     schema_json = json.dumps({
         "@context": "https://schema.org",
         "@type": "NewsArticle",
@@ -293,10 +340,6 @@ def build_blogger_html(data, thumb_url, source_name, official_link):
         }
     }, ensure_ascii=False)
 
-    qs_gu = render_quick_story_box(data.get("quick_story_gu", []), "ક્વિક સ્ટોરી — મુખ્ય મુદ્દાઓ", badge_bg)
-    qs_hi = render_quick_story_box(data.get("quick_story_hi", []), "क्विक स्टोरी — मुख्य बातें", badge_bg)
-    qs_en = render_quick_story_box(data.get("quick_story_en", []), "Quick Story — Key Highlights", badge_bg)
-
     html = f"""
 <script type="application/ld+json">{schema_json}</script>
 
@@ -305,12 +348,8 @@ def build_blogger_html(data, thumb_url, source_name, official_link):
     <img src="{thumb_url}" alt="{data['seo_title_en']}" width="1280" height="720" style="width:100%; max-width:800px; height:auto; border-radius:14px; box-shadow:0 8px 24px rgba(0,0,0,0.12);" />
   </div>
 
-  <div style="background:{badge_bg}; color:#ffffff; padding:12px 18px; border-radius:10px; font-weight:bold; font-size:16px; margin-bottom:16px; text-align:center;">
+  <div style="background:{badge_bg}; color:#ffffff; padding:12px 18px; border-radius:10px; font-weight:bold; font-size:16px; margin-bottom:18px; text-align:center;">
     {badge_label} &nbsp;|&nbsp; Source: {source_name}
-  </div>
-
-  <div style="background:#f8fafc; border-left:5px solid {badge_bg}; padding:12px 16px; border-radius:6px; margin-bottom:20px; font-size:15px;">
-    <strong>રોકાણકારો માટે અસર:</strong> {data.get('sentiment_reason_gu', '')}
   </div>
 
   <!-- Language Switcher (Gujarati Default) -->
@@ -321,15 +360,20 @@ def build_blogger_html(data, thumb_url, source_name, official_link):
   </div>
 
   <div id="lang-gu" style="display:block;">
-    {qs_gu}
+    {render_impact_box("રોકાણકારો માટે અસર", data.get("impact_gu", ""), badge_bg)}
+    {render_quick_story_box(data.get("quick_story_gu", []), "ક્વિક સ્ટોરી — મુખ્ય મુદ્દાઓ", badge_bg)}
     {data['gujarati_html']}
   </div>
+
   <div id="lang-hi" style="display:none;">
-    {qs_hi}
+    {render_impact_box("निवेशकों पर असर", data.get("impact_hi", ""), badge_bg)}
+    {render_quick_story_box(data.get("quick_story_hi", []), "क्विक स्टोरी — मुख्य बातें", badge_bg)}
     {data['hindi_html']}
   </div>
+
   <div id="lang-en" style="display:none;">
-    {qs_en}
+    {render_impact_box("Impact on Investors", data.get("impact_en", ""), badge_bg)}
+    {render_quick_story_box(data.get("quick_story_en", []), "Quick Story — Key Highlights", badge_bg)}
     {data['english_html']}
   </div>
 
@@ -375,7 +419,6 @@ def publish_to_blogger(title, html_content, labels):
 # ================= MAIN EXECUTION =================
 def main():
     history = load_history()
-    repo = os.environ.get("GITHUB_REPO", "")
     published_count = 0
 
     for feed_info in FEEDS:
@@ -393,24 +436,19 @@ def main():
             summary = entry.get("summary", "") or entry.get("description", "")
             uid = hashlib.md5(f"{title}|{link}".encode()).hexdigest()
 
-            if uid in history:
-                continue
-            if not is_within_time_window(entry):
-                continue
-            if not is_important_news(title, summary):
+            if uid in history or not is_within_time_window(entry) or not is_important_news(title, summary):
                 continue
 
-            print(f"🔥 Found Important Recent News: {title}")
+            print(f"🔥 Processing Important News: {title}")
             try:
-                article_data = generate_and_verify_article(feed_info["name"], title, summary, link)
-                thumb_path = create_hd_thumbnail(
+                article_data = generate_and_strictly_verify(feed_info["name"], title, summary, link)
+                thumb_url = create_and_push_thumbnail(
                     article_data["company_name"],
                     article_data["thumb_headline"],
                     article_data["sentiment"],
                     feed_info["name"],
                     uid[:10],
                 )
-                thumb_url = f"https://raw.githubusercontent.com/{repo}/main/{thumb_path}"
                 post_html = build_blogger_html(article_data, thumb_url, feed_info["name"], link)
                 publish_to_blogger(article_data["seo_title_en"], post_html, article_data.get("tags", ["Stock Market"]))
 
@@ -419,7 +457,7 @@ def main():
                 published_count += 1
                 time.sleep(5)
             except Exception as e:
-                print(f"❌ Error processing '{title}': {e}")
+                print(f"❌ NOT PUBLISHED '{title}': {e}")
 
     print(f"Done. Total published in this run: {published_count}")
 
