@@ -22,14 +22,15 @@ from googleapiclient.discovery import build
 # ================= CONFIGURATION =================
 IST_TZ = timezone(timedelta(hours=5, minutes=30))
 
-MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
-FALLBACK_MODELS = list(dict.fromkeys([MODEL_NAME, "gemini-3.5-flash-lite", "gemini-3.0-flash"]))
+# સ્ક્રીનિંગ માટે ફાસ્ટ મોડેલ; લખાણ અને ઓડિટ માટે વધુ ચોક્કસ અને ઓર્ગેનિક મોડેલ
+SCREEN_MODELS = ["gemini-3.5-flash-lite", "gemini-3.0-flash"]
+WRITE_MODELS = ["gemini-3.0-flash", "gemini-3.5-flash-lite"]
 
-MIN_QUALITY_SCORE = 95
-MAX_AUDIT_ROUNDS = 3
-MIN_MARKET_CAP_CR = 500.0  # ₹500 Cr થી નીચેના Micro-Cap / SME સ્ટોક્સ સ્કિપ થશે
-MIN_ENGLISH_WORDS = 480    # AdSense & Google News માટે થિન કન્ટેન્ટ બ્લોક
-MAX_POSTS_PER_RUN = int(os.environ.get("MAX_POSTS_PER_RUN", "12"))
+REQUIRED_TOTAL_SCORE = 200   # 100 (Hard Python Checks) + 100 (Editorial Fact Audit) = 200/200 ફરજિયાત
+MAX_FIX_ROUNDS = 3
+MIN_MARKET_CAP_CR = 500.0    # ₹500 Cr થી નીચેના Micro-Cap / SME સ્ટોક્સ બ્લોક
+MIN_ENGLISH_WORDS = 500      # Google News & AdSense માટે પૂરતી લંબાઈ
+MAX_POSTS_PER_RUN = int(os.environ.get("MAX_POSTS_PER_RUN", "10"))
 
 BLOG_BASE_URL = "https://marketmunafa.blogspot.com/"
 SITE_LOGO_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgXG-GojgyTIZWy4ftRRsgpLsDMxrAEKCRb_BnZsfVTKT0_T9IELdKQYKgACOQkhus69xfx_xg-iVyLvP2-RAki8voVBwja88Dfsg_tQRQR7JvgegMGFfEQfm73oO00WeTo1vPUHghTXmXd_by6k0C-m3Y_5JhoYEjUF8Y8V3KKTbGnUn53dUY-6AN32_A/s1254/1001173067.png"
@@ -42,19 +43,18 @@ FEEDS = [
     {"name": "SEBI Update", "url": "https://www.sebi.gov.in/sebirss.xml"},
 ]
 
-# માત્ર હાઈ-ઈમ્પેક્ટ, માર્કેટ મૂવિંગ સ્ટોક ન્યૂઝના કીવર્ડ્સ
 IMPORTANT_KEYWORDS = [
     "financial result", "quarterly result", "audited result", "unaudited result",
     "q1", "q2", "q3", "q4", "net profit", "revenue", "ebitda",
-    "bagged", "order", "work order", "purchase order", "contract", "letter of award", "loa", "l1 bidder", "tender",
+    "bagged", "work order", "purchase order", "contract", "letter of award", "loa", "l1 bidder", "tender", "order",
     "dividend", "bonus", "stock split", "sub-division", "buyback",
     "merger", "amalgamation", "acquisition", "acquire", "demerger", "takeover",
     "rights issue", "qip", "fund raising", "preferential issue", "capex", "expansion", "commissioning",
-    "joint venture", "strategic partnership", "usfda", "fda approval", "patent", "launch",
-    "delisting", "open offer", "sebi", "penalty", "order passed", "circular", "credit rating upgrade", "downgrade"
+    "joint venture", "strategic partnership", "usfda", "fda approval", "patent",
+    "delisting", "open offer", "sebi", "circular", "credit rating upgrade", "downgrade"
 ]
 
-# પરચુરણ (રૂટિન/બિનજરૂરી) ન્યૂઝ સખત રીતે બ્લોક કરવા માટે
+# પરચુરણ ન્યૂઝ + રૂટિન PSU ઇન્ડિપેન્ડન્ટ ડિરેક્ટર દંડ સખત રીતે બ્લોક
 IGNORE_KEYWORDS = [
     "loss of share", "duplicate share", "trading window", "newspaper publication",
     "certificate under regulation 74", "regulation 74(5)", "regulation 74 (5)",
@@ -70,10 +70,21 @@ IGNORE_KEYWORDS = [
     "non-convertible", "commercial paper", "sme", "emerge", "strike off", "closure of subsidiary",
     "resignation of company secretary", "appointment of company secretary",
     "change in directorate", "cessation of independent director", "re-appointment of independent",
-    "media release - routine", "corrigendum to notice", "intimation of board meeting"
+    "independent director", "composition of board", "composition of the board",
+    "regulation 17", "regulation 18", "regulation 19", "regulation 20", "regulation 21",
+    "non-compliance with the composition", "shortfall of independent", "woman director",
+    "corrigendum to notice", "intimation of board meeting", "board meeting intimation"
 ]
 
-# ભારતીય આંકડાને ફરજિયાત અંગ્રેજી 0-9 માં ફેરવવા માટે
+# AI જેવા લાગતા રોબોટિક શબ્દો (જો આ શબ્દ આવશે તો Python ચેક ફેઈલ કરીને સુધારશે)
+BANNED_AI_PHRASES = [
+    "delve into", "tapestry", "in conclusion", "game-changer", "testament to",
+    "ever-evolving", "rollercoaster", "pivotal moment", "underscores the importance",
+    "double-edged sword", "landscape of", "in today's fast-paced", "it is worth noting",
+    "all eyes are on", "only time will tell", "विकास ऑर्डर", "यह ध्यान देने योग्य है",
+    "निष्कर्ष के तौर पर", "અંતમાં કહીએ તો", "એ નોંધવું મહત્વપૂર્ણ છે"
+]
+
 INDIC_DIGIT_TRANS = str.maketrans({
     chr(base + d): str(d)
     for base in [0x0966, 0x0AE6]
@@ -93,7 +104,7 @@ HEADERS = {
 
 MARKET_CAP_CACHE = {}
 
-# ================= HELPER FUNCTIONS =================
+# ================= CORE UTILITIES =================
 def get_ist_now():
     return datetime.now(IST_TZ)
 
@@ -127,20 +138,18 @@ def save_history(history_dict):
         json.dump(history_dict, f, ensure_ascii=False, indent=2)
 
 def extract_company_prefix_from_title(title):
-    # NSE/BSE RSS ટાઇટલ સામાન્ય રીતે "Company Name - Subject" ફોર્મેટમાં હોય છે
     part = re.split(r"\s[-–—:|]\s", title, maxsplit=1)[0].strip()
     part = re.sub(r"\(.*?\)", "", part).strip()
     return part[:60]
 
 def normalize_company_day_key(company_text, event_type="GEN"):
     clean = re.sub(r"[^a-z0-9\s]", " ", company_text.lower())
-    stop = {"limited", "ltd", "india", "ind", "private", "pvt", "the", "of", "and", "co", "corp", "industries", "enterprises"}
+    stop = {"limited", "ltd", "india", "ind", "private", "pvt", "the", "of", "and", "co", "corp", "corporation", "industries", "enterprises"}
     words = [w for w in clean.split() if w not in stop and len(w) > 1]
     today_str = get_ist_now().strftime("%Y-%m-%d")
     return f"{today_str}|{'_'.join(words[:3])}|{event_type}"
 
 def is_today_ist(entry):
-    """જે તે દિવસના (આજની IST તારીખના) બધા સ્ટોક ન્યૂઝ પસંદ કરે છે."""
     pub_str = entry.get("published") or entry.get("updated") or ""
     if not pub_str:
         return False
@@ -149,9 +158,7 @@ def is_today_ist(entry):
         dt = date_parser.parse(clean_pub)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=IST_TZ)
-        dt_ist = dt.astimezone(IST_TZ)
-        now_ist = get_ist_now()
-        return dt_ist.date() == now_ist.date()
+        return dt.astimezone(IST_TZ).date() == get_ist_now().date()
     except Exception:
         return False
 
@@ -167,7 +174,7 @@ def get_entry_dt(entry):
         return get_ist_now()
 
 def detect_event_type(title, summary, pdf_text=""):
-    text = f"{title} {summary} {pdf_text[:1200]}".lower()
+    text = f"{title} {summary} {pdf_text[:1500]}".lower()
     if any(k in text for k in ["financial result", "quarterly result", "audited financial", "unaudited financial", "statement of financial results", "q1", "q2", "q3", "q4"]):
         return "RESULT"
     if any(k in text for k in ["work order", "purchase order", "letter of award", "loa", "bagged order", "received order", "contract worth", "order worth", "l1 bidder", "award of contract", "order"]):
@@ -176,7 +183,7 @@ def detect_event_type(title, summary, pdf_text=""):
         return "CORPORATE_ACTION"
     if any(k in text for k in ["merger", "acquisition", "amalgamation", "demerger", "takeover", "joint venture"]):
         return "M_AND_A"
-    if any(k in text for k in ["sebi", "circular", "penalty", "usfda", "fda"]):
+    if any(k in text for k in ["sebi", "circular", "usfda", "fda"]):
         return "REGULATORY"
     return "IMPORTANT_UPDATE"
 
@@ -186,9 +193,9 @@ def is_important_news(title, summary):
         return False
     return any(good in text for good in IMPORTANT_KEYWORDS)
 
-def is_duplicate_post(company_name, seo_title, event_type, recent_posts, history_titles):
+def is_duplicate_post(company_name, seo_title, recent_posts, history_titles):
     comp_clean = re.sub(r"[^a-z0-9\s]", " ", company_name.lower()).strip()
-    stop = {"limited", "ltd", "india", "ind", "private", "pvt", "the", "of", "and"}
+    stop = {"limited", "ltd", "india", "ind", "private", "pvt", "the", "of", "and", "corporation"}
     comp_words = [w for w in comp_clean.split() if w not in stop and len(w) > 2][:2]
     all_titles = [p["title"] for p in recent_posts] + history_titles
 
@@ -197,12 +204,9 @@ def is_duplicate_post(company_name, seo_title, event_type, recent_posts, history
 
     for old_t in all_titles:
         old_norm = re.sub(r"[^a-z0-9\s]", "", str(old_t).lower()).strip()
-        if not old_norm:
-            continue
-        if difflib.SequenceMatcher(None, new_norm, old_norm).ratio() >= 0.58:
+        if old_norm and difflib.SequenceMatcher(None, new_norm, old_norm).ratio() >= 0.56:
             return True
 
-    # આજની જ પબ્લિશ થયેલી પોસ્ટમાં એ જ કંપનીની એ જ ઇવેન્ટ રિપીટ ન થાય
     for p in recent_posts:
         p_date = str(p.get("published", ""))[:10]
         p_title_low = p["title"].lower()
@@ -223,7 +227,6 @@ def classify_market_cap(mcap_cr):
     return "Micro Cap"
 
 def get_market_cap_info(company_query):
-    """Screener.in પરથી કંપનીનું લાઈવ માર્કેટ કેપ (₹ Crore) લાવીને Large/Mid/Small Cap ઓળખે છે."""
     clean_q = re.sub(r"\b(limited|ltd|india|private|pvt)\b", "", company_query, flags=re.I)
     clean_q = " ".join(re.sub(r"[^A-Za-z0-9\s&]", " ", clean_q).split()).strip()
     if len(clean_q) < 2:
@@ -247,7 +250,6 @@ def get_market_cap_info(company_query):
             if r.status_code == 200:
                 arr = r.json()
                 if isinstance(arr, list) and arr:
-                    # સૌથી નજીકનું મેચ પસંદ કરો
                     comp_item = arr[0]
                     break
 
@@ -255,10 +257,9 @@ def get_market_cap_info(company_query):
             page_url = f"https://www.screener.in{comp_item['url']}"
             pr = requests.get(page_url, headers=HEADERS, timeout=12)
             if pr.status_code == 200:
-                html_txt = pr.text
                 m = re.search(
                     r"Market\s*Cap.*?<span\s+class=[\"']number[\"'][^>]*>\s*([0-9,\.]+)\s*</span>",
-                    html_txt,
+                    pr.text,
                     flags=re.I | re.S,
                 )
                 if m:
@@ -334,19 +335,18 @@ def extract_pdf_text(link):
                 txt = page.extract_text()
                 if txt:
                     extracted.append(txt.strip())
-            full_text = "\n".join(extracted)
-            return full_text[:14000]
+            return "\n".join(extracted)[:14000]
     except Exception as e:
-        print(f"⚠️ PDF extraction skipped/failed for {link}: {e}")
+        print(f"⚠️ PDF extraction skipped/failed: {e}")
     return ""
 
-# ================= GEMINI & COPYRIGHT CHECK =================
+# ================= GEMINI CALLER =================
 def clean_json_response(raw_text):
     txt = (raw_text or "").strip()
     txt = re.sub(r"^```json\s*|\s*```$", "", txt, flags=re.I).strip()
     return txt
 
-def call_gemini_json(prompt, temperature=0.2):
+def call_gemini_json(prompt, temperature=0.25, models=None):
     raw_keys = [
         os.environ.get("GEMINI_API_KEY_1", ""),
         os.environ.get("GEMINI_API_KEY_2", ""),
@@ -361,8 +361,9 @@ def call_gemini_json(prompt, temperature=0.2):
     if not keys:
         raise ValueError("No GEMINI_API_KEY found in environment secrets.")
 
+    model_list = models or WRITE_MODELS
     last_err = None
-    for model_name in FALLBACK_MODELS:
+    for model_name in model_list:
         for key in keys:
             try:
                 client = genai.Client(api_key=key)
@@ -381,15 +382,23 @@ def call_gemini_json(prompt, temperature=0.2):
                 time.sleep(1.5)
     raise RuntimeError(f"All Gemini keys/models failed: {last_err}")
 
+# ================= HARD PYTHON VALIDATORS (ZERO AI TRUST) =================
 def strip_html(html_str):
     txt = re.sub(r"<[^>]+>", " ", str(html_str or ""))
     return " ".join(txt.split())
 
-def count_words(html_str):
+def count_english_words(html_str):
     return len(re.findall(r"[A-Za-z0-9]+", strip_html(html_str)))
 
+def script_stats(text, unicode_range):
+    plain = strip_html(text)
+    target_chars = len(re.findall(f"[{unicode_range}]", plain))
+    latin_chars = len(re.findall(r"[A-Za-z]", plain))
+    total_alpha = target_chars + latin_chars
+    ratio = (target_chars / total_alpha) if total_alpha > 0 else 0.0
+    return target_chars, ratio
+
 def find_copyright_overlaps(source_text, article_html, ngram_size=8):
-    """મૂળ PDF/ફાઈલિંગમાંથી 8+ શબ્દોની બેઠી લાઈન કોપી થઈ હોય તો પકડે છે."""
     if not source_text or len(source_text) < 200:
         return []
     src_words = re.findall(r"[a-z0-9]+", source_text.lower())
@@ -399,10 +408,8 @@ def find_copyright_overlaps(source_text, article_html, ngram_size=8):
     src_grams = {" ".join(src_words[i:i + ngram_size]) for i in range(len(src_words) - ngram_size + 1)}
     matches = []
     for i in range(len(art_words) - ngram_size + 1):
-        tokens = art_words[i:i + ngram_size]
-        gram = " ".join(tokens)
+        gram = " ".join(art_words[i:i + ngram_size])
         if gram in src_grams and gram not in matches:
-            # સત્તાવાર સેબી/રેગ્યુલેશન શબ્દો કે શુદ્ધ આંકડાઓને અવગણો
             if any(legal in gram for legal in ["regulation 30", "sebi listing obligations", "disclosure requirements"]):
                 continue
             matches.append(gram)
@@ -410,42 +417,127 @@ def find_copyright_overlaps(source_text, article_html, ngram_size=8):
                 break
     return matches
 
-# ================= PRE-SCREENING GATE (MATERIALITY + CAP VERIFICATION) =================
+def run_hard_python_gate(bundle, source_text):
+    """
+    100 પોઈન્ટનું કડક Python વેરિફિકેશન (એક પણ ભૂલ હશે તો 100/100 નહીં મળે).
+    """
+    failures = []
+
+    # 1) ગુજરાતી લિપિની ખાતરી (impact_gu, દરેક quick_story_gu બુલેટ, અને આખો gujarati_html)
+    gu_imp_c, gu_imp_r = script_stats(bundle.get("impact_gu", ""), r"\u0A80-\u0AFF")
+    if gu_imp_c < 18 or gu_imp_r < 0.30:
+        failures.append(f"impact_gu is NOT in Gujarati script (gu_chars={gu_imp_c}, ratio={gu_imp_r:.2f}). Write it strictly in natural Gujarati!")
+
+    qs_gu = bundle.get("quick_story_gu", [])
+    if len(qs_gu) < 4:
+        failures.append("quick_story_gu must have 4-5 Gujarati bullet points.")
+    for idx, pt in enumerate(qs_gu, 1):
+        c, r = script_stats(pt, r"\u0A80-\u0AFF")
+        if c < 14 or r < 0.25:
+            failures.append(f"quick_story_gu bullet #{idx} leaked into English! Rewrite strictly in natural Gujarati (keep only company name & 0-9 digits in English).")
+
+    gu_body_c, gu_body_r = script_stats(bundle.get("gujarati_html", ""), r"\u0A80-\u0AFF")
+    if gu_body_c < 1100 or gu_body_r < 0.48:
+        failures.append(f"gujarati_html too short or too much English (gu_chars={gu_body_c}, ratio={gu_body_r:.2f}). Must be a rich 600-800 word Gujarati article.")
+
+    # 2) હિન્દી લિપિની ખાતરી (impact_hi, દરેક quick_story_hi બુલેટ, અને આખો hindi_html)
+    hi_imp_c, hi_imp_r = script_stats(bundle.get("impact_hi", ""), r"\u0900-\u097F")
+    if hi_imp_c < 18 or hi_imp_r < 0.30:
+        failures.append(f"impact_hi is NOT in Hindi Devanagari script (hi_chars={hi_imp_c}, ratio={hi_imp_r:.2f}).")
+
+    qs_hi = bundle.get("quick_story_hi", [])
+    if len(qs_hi) < 4:
+        failures.append("quick_story_hi must have 4-5 Hindi bullet points.")
+    for idx, pt in enumerate(qs_hi, 1):
+        c, r = script_stats(pt, r"\u0900-\u097F")
+        if c < 14 or r < 0.25:
+            failures.append(f"quick_story_hi bullet #{idx} leaked into English! Rewrite strictly in natural Hindi.")
+
+    hi_body_c, hi_body_r = script_stats(bundle.get("hindi_html", ""), r"\u0900-\u097F")
+    if hi_body_c < 1100 or hi_body_r < 0.48:
+        failures.append(f"hindi_html too short or too much English (hi_chars={hi_body_c}, ratio={hi_body_r:.2f}).")
+
+    # 3) અંગ્રેજી લખાણની લંબાઈ અને શુદ્ધતા
+    en_html = bundle.get("english_html", "")
+    en_words = count_english_words(en_html)
+    if en_words < MIN_ENGLISH_WORDS:
+        failures.append(f"english_html too short ({en_words} words; minimum {MIN_ENGLISH_WORDS} required for Google News & AdSense).")
+    if re.search(r"[\u0900-\u0D7F]", strip_html(en_html)):
+        failures.append("english_html contains non-English Indic characters.")
+
+    # 4) Markdown લીક, HTML ટેબલ અને રોબોટિક AI શબ્દોની ચકાસણી
+    for field in ["gujarati_html", "hindi_html", "english_html"]:
+        val = str(bundle.get(field, ""))
+        if "**" in val or "##" in val or "|---" in val:
+            failures.append(f"{field} contains raw markdown (** or ##). Use clean HTML tags only.")
+        if "<table" not in val.lower():
+            failures.append(f"{field} is missing the structured HTML <table> of verified filing/result/order details.")
+
+    combined_low = " ".join([
+        strip_html(en_html), strip_html(bundle.get("gujarati_html", "")), strip_html(bundle.get("hindi_html", ""))
+    ]).lower()
+    found_cliches = [p for p in BANNED_AI_PHRASES if p in combined_low]
+    if found_cliches:
+        failures.append(f"Robotic AI phrases detected: {found_cliches}. Rewrite naturally like a human business journalist.")
+
+    # 5) કોપીરાઇટ 8-gram ચેક
+    overlaps = find_copyright_overlaps(source_text, en_html, ngram_size=8)
+    if overlaps:
+        failures.append(f"Copyright overlap (8+ words matched source): {overlaps[:4]}. Rewrite those sentences completely in fresh words.")
+
+    # 6) થમ્બનેલ નામ અને હેડલાઈન ફિટ ચેક
+    short_comp = str(bundle.get("short_company_name", "")).strip()
+    if not short_comp or len(short_comp) > 26:
+        failures.append(f"short_company_name ('{short_comp}') must be a clean short brand name <= 24 chars (e.g., 'Power Grid', 'Tata Power').")
+
+    seo_title = str(bundle.get("seo_title_en", "")).strip()
+    if len(seo_title) < 35 or len(seo_title) > 85:
+        failures.append(f"seo_title_en length ({len(seo_title)}) must be between 45 and 78 characters.")
+
+    python_score = 100 if not failures else max(0, 100 - (len(failures) * 15))
+    return python_score, failures
+
+# ================= STRICT PRE-SCREENING GATE =================
 def pre_screen_filing(source, title, summary, pdf_text, screener_info):
-    """પરચુરણ ન્યૂઝ અને Micro-cap/SME સ્ટોક્સને શરૂઆતમાં જ ફિલ્ટર કરી દે છે."""
+    """પરચુરણ ન્યૂઝ, રૂટિન નાના દંડ અને Micro-cap/SME સ્ટોક્સને શરૂઆતમાં જ રોકી દે છે."""
     prompt = f"""
-You are the Senior Stock Market Desk Editor for an Indian financial portal.
-Evaluate the exchange filing below and decide STRICTLY whether it deserves a full news article.
+You are the Managing Editor of a respected Indian financial newspaper.
+Decide STRICTLY whether this NSE/BSE/SEBI filing is genuine, material, high-impact stock market news worthy of a full research report.
 
 SOURCE: {source}
 TITLE: {title}
 SUMMARY: {summary}
 SCREENER MARKET CAP DATA: {json.dumps(screener_info)}
 PDF EXCERPT:
-{pdf_text[:2800] if pdf_text else "No PDF extracted"}
+{pdf_text[:3200] if pdf_text else "No PDF extracted"}
 
-STRICT ELIGIBILITY RULES:
-1. HIGH-IMPACT ONLY (NO TRIVIAL / PERCHURAN NEWS):
-   - APPROVE ONLY truly market-moving news: Quarterly/Annual Financial Results (Q1/Q2/Q3/Q4), Significant Order Wins/Contracts/LOA, Dividend, Bonus, Stock Split, Buyback, Merger/Acquisition/Demerger, Major Capex/Expansion, USFDA/Major Approval, QIP/Rights/Major Fund Raise, Major SEBI Action/Circular affecting stock market investors.
-   - REJECT routine/trivial filings: minor/immaterial orders, routine compliance, investor meet intimations, board meeting date intimations (without actual outcome), credit rating reaffirmation without change, routine subsidiary updates, or filings lacking any concrete financial details.
-2. LARGE CAP, MID CAP, OR SMALL CAP ONLY:
-   - If Screener Market Cap is provided and < ₹500 Crore -> REJECT (Micro Cap / SME).
-   - If Screener Market Cap is not found: for stock filings, ONLY approve if it is a clearly recognized NSE/BSE Large Cap (>=₹20,000 Cr), Mid Cap (₹5,000-₹20,000 Cr), or Small Cap (₹500-₹5,000 Cr) company. Strictly REJECT micro-cap, penny, SME/Emerge, or obscure companies.
-   - For SEBI Update circulars affecting the broader Indian stock market, set cap_category = "Market Wide" and is_eligible = true if major.
+STRICT REJECTION RULES (REJECT WITHOUT HESITATION):
+1. REJECT ROUTINE / MINOR FINES: Reject NSE/BSE fines for independent director vacancy, board composition (LODR Reg 17/18/19/20/21), or any minor compliance penalty below ₹5 Crore (or < 0.05% of the company's market cap). A ₹15 lakh fine on a Large Cap PSU is routine noise, NOT news!
+2. REJECT TRIVIAL / PERCHURAN FILINGS: Reject routine board meeting date notices (without actual outcome), investor meet schedules, ESOP allotments, routine director/CS changes, credit rating reaffirmation without upgrade/downgrade, or filings with no concrete numbers/material impact.
+3. LARGE CAP, MID CAP, OR SMALL CAP ONLY:
+   - If Market Cap < ₹500 Crore -> REJECT (Micro Cap / SME).
+   - If Screener Market Cap is unavailable: ONLY approve clearly established Large Cap, Mid Cap, or Small Cap (>=₹500 Cr) NSE/BSE companies, or market-wide SEBI circulars.
+4. APPROVE ONLY HIGH-IMPACT NEWS:
+   - Quarterly/Annual Financial Results (Q1/Q2/Q3/Q4) with real numbers
+   - Material Order Wins / Contracts / LOA with meaningful value
+   - Dividend, Bonus, Stock Split, Buyback
+   - Merger, Acquisition, Demerger, Major Capex/Plant Commissioning, USFDA Approval, QIP/Rights Issue, Major Regulatory Action with real financial impact.
 
 Return ONLY valid JSON:
 {{
   "is_eligible": true or false,
-  "reject_reason": "Short reason if false, else empty string",
-  "company_name": "Clean Official English Company Name (e.g., Larsen & Toubro, Tata Power, or SEBI)",
+  "reject_reason": "Clear short reason if false, else empty",
+  "company_name": "Official English Company Name",
+  "short_company_name": "Clean short display name for thumbnail, max 20 chars (e.g., 'Power Grid', 'Tata Motors', 'BEL')",
   "cap_category": "Large Cap or Mid Cap or Small Cap or Market Wide or Micro Cap",
-  "event_type": "RESULT or ORDER or CORPORATE_ACTION or M_AND_A or REGULATORY or IMPORTANT_UPDATE"
+  "event_type": "RESULT or ORDER or CORPORATE_ACTION or M_AND_A or REGULATORY or IMPORTANT_UPDATE",
+  "material_sentiment": "POSITIVE or NEGATIVE or NEUTRAL"
 }}
 """
-    raw = call_gemini_json(prompt, temperature=0.1)
+    raw = call_gemini_json(prompt, temperature=0.1, models=SCREEN_MODELS)
     return json.loads(raw)
 
-# ================= THUMBNAIL GENERATOR + INSTANT GIT PUSH =================
+# ================= CLEAN EDITORIAL THUMBNAIL ENGINE (ZERO TEXT OVERFLOW) =================
 def remove_white_bg(img):
     img = img.convert("RGBA")
     data = np.array(img)
@@ -453,74 +545,136 @@ def remove_white_bg(img):
     data[(r > 235) & (g > 235) & (b > 235), 3] = 0
     return Image.fromarray(data)
 
-def add_sticker_outline(img, border_size=7, border_color=(255, 255, 255, 255)):
+def add_sticker_outline(img, border_size=6, border_color=(255, 255, 255, 255)):
     alpha = img.split()[3]
     dilated = alpha.filter(ImageFilter.MaxFilter(border_size * 2 + 1))
     outline = Image.new("RGBA", img.size, border_color)
     outline.putalpha(dilated)
     return Image.alpha_composite(outline, img)
 
-def create_and_push_thumbnail(company_name, headline_short, sentiment, cap_category, source_name, file_hash):
-    W, H = 1280, 720
-    base = Image.new("RGBA", (W, H), (244, 240, 234, 255))
-    draw = ImageDraw.Draw(base)
+def load_font(size):
+    for p in [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "arialbd.ttf",
+    ]:
+        if os.path.exists(p):
+            try:
+                return ImageFont.truetype(p, size)
+            except Exception:
+                pass
+    return ImageFont.load_default()
 
-    if sentiment == "POSITIVE":
-        accent, glow, badge_text = (16, 150, 72, 255), (34, 197, 94, 70), "POSITIVE NEWS"
-    elif sentiment == "NEGATIVE":
-        accent, glow, badge_text = (210, 35, 42, 255), (239, 68, 68, 70), "NEGATIVE NEWS"
-    else:
-        accent, glow, badge_text = (29, 78, 216, 255), (59, 130, 246, 70), "IMPORTANT UPDATE"
-
-    draw.ellipse([680, 70, 1230, 620], fill=glow)
-    draw.rounded_rectangle([40, 40, 680, 680], radius=32, fill=(255, 255, 255, 244), outline=accent, width=5)
-    draw.rounded_rectangle([710, 610, 1240, 680], radius=24, fill=(15, 23, 42, 255))
-
-    try:
-        font_badge = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 30)
-        font_comp = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 52)
-        font_head = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 36)
-        font_brand = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
-    except Exception:
-        font_badge = font_comp = font_head = font_brand = ImageFont.load_default()
-
-    top_tag = f"{cap_category.upper()} | {source_name.split()[0].upper()}"[:26]
-    draw.rounded_rectangle([80, 78, 620, 134], radius=14, fill=(15, 23, 42, 255))
-    draw.text((102, 91), top_tag, fill=(255, 255, 255, 255), font=font_brand)
-
-    draw.rounded_rectangle([80, 158, 490, 224], radius=16, fill=accent)
-    draw.text((108, 174), badge_text, fill=(255, 255, 255, 255), font=font_badge)
-
-    draw.text((80, 255), company_name[:20].upper(), fill=(15, 23, 42, 255), font=font_comp)
-
-    clean_hl = " ".join(re.sub(r"[^\x20-\x7E₹]", "", headline_short).split())
-    words, lines, cur = clean_hl.split(), [], ""
+def wrap_lines_to_pixel_width(draw, text, font, max_width):
+    words = text.split()
+    lines, cur = [], ""
     for w in words:
-        if len(cur + " " + w) <= 24:
-            cur = (cur + " " + w).strip()
+        test = f"{cur} {w}".strip()
+        bbox = draw.textbbox((0, 0), test, font=font)
+        if (bbox[2] - bbox[0]) <= max_width:
+            cur = test
         else:
-            lines.append(cur)
+            if cur:
+                lines.append(cur)
             cur = w
     if cur:
         lines.append(cur)
+    return lines
 
-    y_text = 345
-    for line in lines[:4]:
-        draw.text((80, y_text), line, fill=(51, 65, 85, 255), font=font_head)
-        y_text += 54
+def fit_single_or_two_line_title(draw, text, max_width, start_size=50, min_size=30, max_lines=2):
+    for sz in range(start_size, min_size - 1, -2):
+        fnt = load_font(sz)
+        lines = wrap_lines_to_pixel_width(draw, text, fnt, max_width)
+        if len(lines) <= max_lines and all((draw.textbbox((0, 0), l, font=fnt)[2] - draw.textbbox((0, 0), l, font=fnt)[0]) <= max_width for l in lines):
+            return fnt, lines
+    fnt = load_font(min_size)
+    return fnt, wrap_lines_to_pixel_width(draw, text, fnt, max_width)[:max_lines]
 
-    draw.text((820, 628), "MARKET MUNAFA", fill=(255, 255, 255, 255), font=font_brand)
+def create_and_push_thumbnail(short_company_name, headline_short, sentiment, cap_category, source_name, file_hash):
+    """કંપનીનું નામ કે હેડલાઈન ક્યારેય કપાય કે બોક્સની બહાર ન જાય તેવી પિક્સેલ-પરફેક્ટ ડિઝાઇન."""
+    W, H = 1280, 720
+    base = Image.new("RGBA", (W, H), (245, 247, 250, 255))
+    draw = ImageDraw.Draw(base)
+
+    if sentiment == "POSITIVE":
+        accent, glow, badge_text = (15, 118, 110, 255), (20, 184, 166, 60), "MARKET POSITIVE"
+    elif sentiment == "NEGATIVE":
+        accent, glow, badge_text = (185, 28, 28, 255), (239, 68, 68, 55), "KEY ALERT"
+    else:
+        accent, glow, badge_text = (29, 78, 216, 255), (59, 130, 246, 55), "STOCK UPDATE"
+
+    # બેકગ્રાઉન્ડ સોફ્ટ એક્સેન્ટ
+    draw.ellipse([700, 60, 1250, 610], fill=glow)
+
+    # ડાબી બાજુ ક્લીન એડિટોરિયલ કાર્ડ (x: 42 to 680, અંદરનું સેફ ટેક્સ્ટ બોક્સ x: 76 to 644 -> max_width = 568px)
+    CARD_L, CARD_T, CARD_R, CARD_B = 42, 42, 682, 678
+    TEXT_X = 78
+    MAX_TEXT_W = (CARD_R - 36) - TEXT_X  # 568px સ્ટ્રીક્ટ સેફ વિડ્થ
+
+    draw.rounded_rectangle([CARD_L, CARD_T, CARD_R, CARD_B], radius=28, fill=(255, 255, 255, 252), outline=accent, width=5)
+
+    # 1) ટોપ સોર્સ અને માર્કેટ કેપ પિલ
+    font_pill = load_font(24)
+    top_tag = f"{cap_category.upper()}  •  {source_name.split()[0].upper()}"
+    tb1 = draw.textbbox((0, 0), top_tag, font=font_pill)
+    pill_w = min(MAX_TEXT_W, (tb1[2] - tb1[0]) + 44)
+    draw.rounded_rectangle([TEXT_X, 78, TEXT_X + pill_w, 126], radius=12, fill=(15, 23, 42, 255))
+    draw.text((TEXT_X + 22, 89), top_tag, fill=(255, 255, 255, 255), font=font_pill)
+
+    # 2) સેન્ટિમેન્ટ બેજ
+    font_badge = load_font(26)
+    tb2 = draw.textbbox((0, 0), badge_text, font=font_badge)
+    badge_w = min(MAX_TEXT_W, (tb2[2] - tb2[0]) + 48)
+    draw.rounded_rectangle([TEXT_X, 146, TEXT_X + badge_w, 200], radius=12, fill=accent)
+    draw.text((TEXT_X + 24, 159), badge_text, fill=(255, 255, 255, 255), font=font_badge)
+
+    # 3) કંપનીનું નામ (ઓટો-ફિટ, ક્યારેય કપાશે નહીં કે બોર્ડર બહાર નહીં જાય)
+    clean_comp = " ".join(re.sub(r"[^\x20-\x7E&]", "", short_company_name).split()).upper()
+    font_comp, comp_lines = fit_single_or_two_line_title(draw, clean_comp, MAX_TEXT_W, start_size=52, min_size=32, max_lines=2)
+    y_cur = 232
+    for cl in comp_lines:
+        draw.text((TEXT_X, y_cur), cl, fill=(15, 23, 42, 255), font=font_comp)
+        cb = draw.textbbox((0, 0), cl, font=font_comp)
+        y_cur += (cb[3] - cb[1]) + 14
+
+    # ડિવાઇડર લાઈન
+    y_cur += 10
+    draw.rectangle([TEXT_X, y_cur, TEXT_X + 120, y_cur + 6], fill=accent)
+    y_cur += 26
+
+    # 4) મુખ્ય હેડલાઈન (ઓટો-ફિટ)
+    clean_hl = " ".join(re.sub(r"[^\x20-\x7E₹]", "", headline_short).split())
+    font_hl, hl_lines = fit_single_or_two_line_title(draw, clean_hl, MAX_TEXT_W, start_size=38, min_size=26, max_lines=3)
+    for hl in hl_lines:
+        draw.text((TEXT_X, y_cur), hl, fill=(51, 65, 85, 255), font=font_hl)
+        hb = draw.textbbox((0, 0), hl, font=font_hl)
+        y_cur += (hb[3] - hb[1]) + 16
+
+    # 5) કાર્ડના નીચેના ભાગમાં તારીખ અને રિસર્ચ ટેગ (ખાલી જગ્યા ભરાય અને પ્રોફેશનલ દેખાય)
+    font_meta = load_font(22)
+    date_str = get_ist_now().strftime("%d %b %Y").upper()
+    draw.text((TEXT_X, CARD_B - 62), f"EQUITY RESEARCH DESK   •   {date_str}", fill=(100, 116, 139, 255), font=font_meta)
+
+    # જમણી બાજુ તમારો ફોટો અને બ્રાન્ડ બાર
+    draw.rounded_rectangle([715, 610, 1238, 678], radius=20, fill=(15, 23, 42, 255))
+    font_brand = load_font(30)
+    bb = draw.textbbox((0, 0), "MARKET MUNAFA", font=font_brand)
+    draw.text((715 + (523 - (bb[2] - bb[0])) // 2, 628), "MARKET MUNAFA", fill=(255, 255, 255, 255), font=font_brand)
 
     if os.path.exists(AUTHOR_IMG_PATH):
         author = Image.open(AUTHOR_IMG_PATH)
         author = remove_white_bg(author)
-        author.thumbnail((520, 520), Image.Resampling.LANCZOS)
-        author = add_sticker_outline(author, border_size=7)
-        shadow = Image.new("RGBA", author.size, (0, 0, 0, 95))
+        bbox = author.getbbox()
+        if bbox:
+            author = author.crop(bbox)
+        author.thumbnail((510, 520), Image.Resampling.LANCZOS)
+        author = add_sticker_outline(author, border_size=6)
+        shadow = Image.new("RGBA", author.size, (0, 0, 0, 80))
         shadow.putalpha(author.split()[3])
         shadow = shadow.filter(ImageFilter.GaussianBlur(10))
-        pos_x, pos_y = 730, 615 - author.height
-        base.paste(shadow, (pos_x + 10, pos_y + 10), shadow)
+        pos_x = 715 + (523 - author.width) // 2
+        pos_y = 612 - author.height
+        base.paste(shadow, (pos_x + 8, pos_y + 8), shadow)
         base.paste(author, (pos_x, pos_y), author)
 
     out_path = os.path.join(THUMBNAIL_DIR, f"thumb_{file_hash}.jpg")
@@ -540,11 +694,11 @@ def create_and_push_thumbnail(company_name, headline_short, sentiment, cap_categ
     branch = os.environ.get("GITHUB_BRANCH", "main").strip()
     return f"https://raw.githubusercontent.com/{repo}/{branch}/{out_path}"
 
-# ================= STRICT ITERATIVE QUALITY & SEO GATE =================
+# ================= SEPARATE ORGANIC MULTILINGUAL PIPELINE =================
 def sanitize_non_default_headings(html_str):
     return re.sub(
         r"<h2[^>]*>(.*?)</h2>",
-        r'<div style="font-size:21px; font-weight:800; color:#0f172a; margin:20px 0 10px; border-left:4px solid #1d4ed8; padding-left:10px;">\1</div>',
+        r'<div style="font-size:20px; font-weight:800; color:#0f172a; margin:22px 0 10px; border-left:4px solid #1d4ed8; padding-left:10px;">\1</div>',
         html_str,
         flags=re.IGNORECASE | re.DOTALL,
     )
@@ -552,200 +706,226 @@ def sanitize_non_default_headings(html_str):
 def get_event_specific_instructions(event_type):
     if event_type == "RESULT":
         return """
-MANDATORY FINANCIAL RESULTS FORMAT:
-- You MUST include a clean HTML <table> (border-collapse:collapse; width:100%) titled Financial Performance Breakdown showing EVERY available metric from the PDF:
-  1. Revenue from Operations (₹ Crore/Lakh) + YoY % & QoQ % Change
-  2. Net Profit / PAT (₹ Crore/Lakh) + YoY % & QoQ % Change
-  3. Operating Profit / EBITDA & Operating Margin (%) (if disclosed)
-  4. Basic EPS (₹) & Dividend per share (if announced)
-  5. Basis: Consolidated vs Standalone (state clearly)
-- Also explain margin drivers, segment highlights, and year-on-year growth context ONLY from the PDF. If a specific figure is not in the PDF, write 'Not Disclosed' — NEVER guess or calculate wrong percentages.
+MANDATORY RESULT DETAILS:
+- Include a clean HTML <table> with exact verified numbers from the PDF: Revenue from Operations (₹ Cr/Lakh) + YoY% & QoQ%, Net Profit/PAT + YoY% & QoQ%, EBITDA & Margin% (if disclosed), EPS (₹), Dividend (if any), and Consolidated/Standalone basis.
+- Explain real operational drivers from the filing. If any metric is missing in the PDF, write 'Not Disclosed' — never guess.
 """
     if event_type == "ORDER":
         return """
-MANDATORY ORDER / CONTRACT WIN FORMAT:
-- You MUST include a clean HTML <table> (border-collapse:collapse; width:100%) titled Complete Order / Contract Details covering ALL Regulation 30 points from the PDF:
-  1. Exact Order / Contract Value (₹ Crore / Lakh / USD — if not disclosed, clearly state 'Not Disclosed')
-  2. Client / Awarding Entity Name
-  3. Order Category: Domestic or International
-  4. Nature & Scope of Work / Products Supplied
-  5. Execution Timeline / Completion Period
-  6. Promoter / Promoter Group Interest & Related-Party Transaction Disclosure (Yes/No as per filing)
-- Explain how this order strengthens business visibility without giving buy/sell advice.
+MANDATORY ORDER / CONTRACT DETAILS:
+- Include a clean HTML <table> with exact Regulation 30 points from the PDF: Exact Order Value (₹ Cr/Lakh/USD), Client / Awarding Authority, Domestic or International, Scope of Work, Execution Timeline, and Related-Party Disclosure (Yes/No).
 """
     return """
-MANDATORY STRUCTURED DETAILS FORMAT:
-- Include a clean HTML <table> (border-collapse:collapse; width:100%) summarizing all key parameters (Company, Market Cap Category, Key Financial/Action Metric, Record/Effective Date, Board/SEBI Approval Details) directly verified from the PDF.
+MANDATORY FILING DETAILS:
+- Include a clean HTML <table> summarizing key parameters (Company, Market Cap Category, Key Financial/Action Metric, Record/Effective Date, Key Terms) strictly from the PDF.
 """
 
-def generate_and_strictly_verify(source, title, summary, pdf_text, link, company_name, cap_category, mcap_cr, event_type):
-    print(f"📝 Generating Google #1 SEO Draft ({event_type} | {cap_category})...")
+def step1_write_organic_english(filing_context, company_name, short_company_name, cap_category, event_type, sentiment):
+    event_rules = get_event_specific_instructions(event_type)
+    prompt = f"""
+You are a senior Mumbai equity markets journalist (writing in the crisp, calm, authoritative style of Mint or Business Standard) for 'Market Munafa'.
+Write a 100% ORIGINAL, copyright-free, completely natural human-sounding financial news article in Indian English based ONLY on the verified official filing below.
+
+{filing_context}
+{event_rules}
+
+ORGANIC JOURNALISM & GOOGLE #1 SEO RULES:
+1. SOUND 100% HUMAN & ORGANIC: Write like a real business reporter—direct sentences, specific facts, clear context, zero hype, zero fluff, zero dramatic exclamation marks.
+2. STRICTLY BANNED AI PHRASES: Never use 'delve', 'tapestry', 'in conclusion', 'game-changer', 'testament', 'ever-evolving', 'rollercoaster', 'pivotal moment', 'underscores', 'landscape', 'it is worth noting', 'all eyes are on', 'only time will tell'.
+3. WORD COUNT FOR GOOGLE NEWS & ADSENSE: Write 600 to 780 words of genuine substance in `english_html`.
+4. ZERO COPYRIGHT OVERLAP: Never copy sentences verbatim from the PDF or RSS summary. Express facts in completely fresh reporting prose.
+5. STRUCTURE OF `english_html`:
+   - 2 tight opening lead paragraphs (who, what, exact rupee/percentage numbers, why it matters).
+   - Clean HTML `<table>` of verified filing details.
+   - 3 clear `<h2>` sections: (1) Breakdown of the Exchange Filing, (2) Business & Sector Context, (3) Key Points for Shareholders (balanced, neutral — NO buy/sell advice).
+   - 3 natural reader FAQs inside the article + matching `faqs_schema` array.
+6. CLEAN HTML ONLY (`<h2>`, `<h3>`, `<p>`, `<table>`, `<thead>`, `<tbody>`, `<tr>`, `<th>`, `<td>`, `<ul>`, `<li>`, `<strong>`). Zero markdown (`**` or `##`).
+
+Return ONLY valid JSON:
+{{
+  "seo_title_en": "Natural keyword-first Google News headline with key number (56-74 chars)",
+  "meta_description": "Crisp 145-155 char English meta summary",
+  "company_name": "{company_name}",
+  "short_company_name": "{short_company_name}",
+  "thumb_headline": "Short crisp 4-6 word English headline for thumbnail",
+  "sentiment": "{sentiment}",
+  "tags": ["Stock Market", "{cap_category}", "{short_company_name}", "NSE", "BSE"],
+  "impact_en": "1 calm, concrete sentence explaining the real investor takeaway.",
+  "quick_story_en": ["Fact-rich crisp bullet 1", "Bullet 2", "Bullet 3", "Bullet 4"],
+  "faqs_schema": [
+    {{"q": "Natural search question 1?", "a": "Direct 2-sentence factual answer."}},
+    {{"q": "Natural search question 2?", "a": "Direct 2-sentence factual answer."}},
+    {{"q": "Natural search question 3?", "a": "Direct 2-sentence factual answer."}}
+  ],
+  "english_html": "Complete 600-780 word organic Indian English HTML article."
+}}
+"""
+    raw = call_gemini_json(prompt, temperature=0.35, models=WRITE_MODELS)
+    return json.loads(raw)
+
+def step2_write_native_language(en_data, target_lang_name, lang_code, company_name, short_company_name):
+    """અલગ ડેડિકેટેડ કોલ: 100% કુદરતી અખબારી ગુજરાતી કે હિન્દી લખશે (અંગ્રેજી લીક ક્યારેય નહીં થાય)."""
+    style_ref = (
+        "Divya Bhaskar Business / Gujarat Samachar Business (natural everyday Gujarati used by Gujarati investors today, never textbook or Sanskritized)"
+        if lang_code == "gu"
+        else "Mint Hindi / Economic Times Hindi (natural fluent Hindi used by Indian market readers today, never awkward translated phrases like 'विकास ऑर्डर')"
+    )
+    prompt = f"""
+You are a veteran native {target_lang_name} stock market journalist writing in the warm, crisp, natural newspaper style of {style_ref}.
+Rewrite the verified English stock report below into 100% authentic, fluent, human-sounding {target_lang_name}.
+
+CRITICAL SCRIPT & ACCURACY RULES (NON-NEGOTIABLE):
+1. WRITE EVERY SINGLE SENTENCE IN {target_lang_name} SCRIPT: `impact_{lang_code}`, EVERY bullet in `quick_story_{lang_code}`, and ALL paragraphs, headings, table labels, and FAQs in `{target_lang_name.lower()}_html` MUST be written in natural {target_lang_name} script — NEVER leave full sentences in English!
+2. PRESERVE ENGLISH DIGITS & COMPANY/SHARE NAMES ONLY:
+   - Keep ALL numbers strictly in English Arabic digits (`0-9`, e.g., `₹450 Crore`, `14.5%`, `Q2 FY27`, `November 28, 2026`).
+   - Keep ALL company names, stock names, and standard market acronyms strictly in English Latin letters (`{company_name}`, `{short_company_name}`, `NSE`, `BSE`, `SEBI`, `PAT`, `EBITDA`, `EPS`, `IPO`, `LOA`).
+3. KEEP 100% OF FACTS, NUMBERS & HTML TABLE: Include the complete verified HTML `<table>` and all 3 `<h2>` sections + 3 FAQs (600-780 words). Do not shorten, summarize, or invent any number.
+4. CLEAN HTML ONLY: Use `<h2>`, `<h3>`, `<p>`, `<table>`, `<thead>`, `<tbody>`, `<tr>`, `<th>`, `<td>`, `<ul>`, `<li>`, `<strong>`. Zero markdown (`**` or `##`).
+
+VERIFIED ENGLISH REPORT TO ADAPT NATIVELY:
+{json.dumps({
+    "impact_en": en_data["impact_en"],
+    "quick_story_en": en_data["quick_story_en"],
+    "english_html": en_data["english_html"]
+}, ensure_ascii=False)}
+
+Return ONLY valid JSON with these exact 3 keys:
+{{
+  "impact_{lang_code}": "1 crisp natural {target_lang_name} sentence on investor impact (with English stock name & 0-9 digits)",
+  "quick_story_{lang_code}": ["Natural {target_lang_name} bullet 1", "Bullet 2", "Bullet 3", "Bullet 4"],
+  "{target_lang_name.lower()}_html": "Complete 600-780 word organic {target_lang_name} HTML article with full data table, H2 sections, and 3 FAQs."
+}}
+"""
+    raw = call_gemini_json(prompt, temperature=0.3, models=WRITE_MODELS)
+    return enforce_english_digits(json.loads(raw))
+
+def step3_editorial_audit_and_fix(bundle, filing_context, python_failures):
+    """સ્વતંત્ર ચીફ એડિટર ઓડિટ: Python એ પકડેલી બધી ભૂલો + ફેક્ટ/વ્યાકરણ/ઓર્ગેનિક ટોન સુધારીને 100/100 એડિટર સ્કોર આપે છે."""
+    failure_block = (
+        "CRITICAL HARD ERRORS DETECTED BY AUTOMATED CODE GATE (MUST FIX ALL 100%):\n- " + "\n- ".join(python_failures)
+        if python_failures else "Automated Python Gate passed 100/100! Now do a final strict factual, grammar, and human-readability audit."
+    )
+
+    prompt = f"""
+You are the Strict Chief Editor & Fact-Checker of 'Market Munafa'.
+Your job is to inspect this complete trilingual article JSON against the Official Exchange Filing and FIX EVERY SINGLE ERROR.
+
+{filing_context}
+
+{failure_block}
+
+STRICT 100-POINT EDITORIAL AUDIT CHECKLIST:
+1. FACTUAL PERFECTION: Cross-check every single ₹ figure, percentage, YoY/QoQ growth, client name, execution period, and Standalone/Consolidated basis against the official PDF. Zero hallucination, zero wrong math.
+2. LANGUAGE PURITY & ORGANIC HUMAN FLOW:
+   - `impact_gu`, ALL 4 bullets of `quick_story_gu`, and `gujarati_html` MUST be 100% fluent contemporary Gujarati script (only company/share names and 0-9 digits in English). Fix any English sentence leakage or awkward phrasing immediately.
+   - `impact_hi`, ALL 4 bullets of `quick_story_hi`, and `hindi_html` MUST be 100% fluent contemporary Hindi Devanagari script (only company/share names and 0-9 digits in English).
+   - `english_html` must read like a calm, natural Mumbai business journalist (zero AI clichés, zero hype).
+3. ZERO COPYRIGHT OVERLAP: Rewrite any sentence echoing the PDF/summary verbatim.
+4. GOOGLE NEWS & ADSENSE COMPLIANCE: Neutral E-E-A-T analysis, zero buy/sell tips, clean HTML tables in all 3 languages, zero markdown (`**`, `##`).
+5. HONEST SCORING: Only give `"editor_score": 100` if EVERY single check above is genuinely flawless AFTER your fixes. Otherwise give the honest lower score and list remaining `"issues_found"`.
+
+Return ONLY valid JSON containing ALL keys of the input bundle PLUS `"editor_score"` (int 0-100) and `"issues_found"` (list).
+
+CURRENT ARTICLE BUNDLE:
+{json.dumps(bundle, ensure_ascii=False)}
+"""
+    raw = call_gemini_json(prompt, temperature=0.1, models=WRITE_MODELS)
+    return enforce_english_digits(json.loads(raw))
+
+def generate_and_verify_200_percent(source, title, summary, pdf_text, company_name, short_company_name, cap_category, mcap_cr, event_type, sentiment):
     mcap_note = f"₹{mcap_cr:,.0f} Crore ({cap_category})" if mcap_cr else cap_category
     today_str = get_ist_now().strftime("%B %d, %Y")
-    event_rules = get_event_specific_instructions(event_type)
-
     filing_context = f"""
 Date: {today_str}
 Source: {source}
-Company: {company_name}
-Market Cap Category: {mcap_note}
+Company: {company_name} (Short Name: {short_company_name})
+Market Cap: {mcap_note}
 Event Type: {event_type}
 RSS Title: {title}
 RSS Summary: {summary}
 Official PDF Full Text:
-{pdf_text if pdf_text else "PDF text not available; strictly stick to verified RSS details and mark undisclosed figures clearly."}
+{pdf_text if pdf_text else "PDF text unavailable; strictly rely on verified RSS facts and mark undisclosed figures clearly."}
 """
 
-    draft_prompt = f"""
-You are a senior Indian equity research journalist writing for 'Market Munafa' (targeted for Google News Top Stories, Google #1 Search Ranking, fast Search Console indexing, and 100% AdSense E-E-A-T compliance).
+    print("   ✍️ Step 1/3: Writing organic English editorial report...")
+    en_data = step1_write_organic_english(filing_context, company_name, short_company_name, cap_category, event_type, sentiment)
+    time.sleep(1.5)
 
-Write a 100% ORIGINAL, deeply detailed, error-free, copyright-free financial news article from scratch based ONLY on the verified official filing below:
+    print("   ✍️ Step 2/3: Writing native Gujarati editorial report...")
+    gu_data = step2_write_native_language(en_data, "Gujarati", "gu", company_name, short_company_name)
+    time.sleep(1.5)
 
-{filing_context}
+    print("   ✍️ Step 3/3: Writing native Hindi editorial report...")
+    hi_data = step2_write_native_language(en_data, "Hindi", "hi", company_name, short_company_name)
+    time.sleep(1.5)
 
-{event_rules}
+    bundle = {**en_data, **gu_data, **hi_data}
+    bundle = enforce_english_digits(bundle)
+    source_blob = f"{summary}\n{pdf_text}"
 
-STRICT EDITORIAL, SEO & ADSENSE STANDARDS:
-1. GOOGLE NEWS & ADSENSE WORD COUNT: Each language version (Gujarati, Hindi, AND English) MUST be comprehensive and complete — strictly **650 to 850 words** each! Zero thin content, zero half-written sections.
-2. ZERO COPYRIGHT OVERLAP: Do NOT copy prose sentences from the PDF or RSS summary. Write completely fresh, natural journalistic analysis in your own words while keeping numbers and company facts 100% exact.
-3. ENGLISH PRESERVATION RULE: Keep ALL numbers in English Arabic digits (`0-9`, e.g., `₹450 Crore`, `18.5%`, `Q2 FY27`), and keep ALL company names, stock tickers, and market terms (`NSE`, `BSE`, `SEBI`, `PAT`, `EBITDA`, `EPS`, `LOA`, `{company_name}`) strictly in English script even inside Gujarati and Hindi text!
-4. NATURAL CONTEMPORARY LANGUAGE: Write warm, crisp, authoritative modern Gujarati, Hindi, and Indian English — zero robotic AI clichés ('delve', 'tapestry', 'game-changer', 'in conclusion', 'विकास ऑर्डर').
-5. GOOGLE #1 SEO STRUCTURE (for each language HTML):
-   - Direct inverted-pyramid opening paragraphs answering Who, What, Exact Value/Numbers, and Why it matters.
-   - Clean styled HTML `<table>` with exact verified filing details (`border:1px solid #cbd5e1; padding:9px 12px;`).
-   - 3–4 focused `<h2>` sections: (1) Complete Announcement / Filing Breakdown, (2) Key Business & Sector Context, (3) What Investors Should Track Next (balanced E-E-A-T view, strictly NO buy/sell tips or guaranteed returns), (4) Frequently Asked Questions (3 crisp FAQs).
-6. CLEAN HTML ONLY: Use `<h2>`, `<h3>`, `<p>`, `<table>`, `<thead>`, `<tbody>`, `<tr>`, `<th>`, `<td>`, `<ul>`, `<li>`, `<strong>`. NEVER use markdown (`**`, `##`, `|---|`).
+    # 200/200 ઝીરો-ડિફેક્ટ ઓડિટ લૂપ
+    for rnd in range(1, MAX_FIX_ROUNDS + 1):
+        py_score, py_failures = run_hard_python_gate(bundle, source_blob)
+        print(f"   🔎 Audit Round {rnd}/{MAX_FIX_ROUNDS} | Pre-Fix Python Gate: {py_score}/100 | Failures: {len(py_failures)}")
 
-Return ONLY valid JSON with these exact keys:
-{{
-  "seo_title_en": "Keyword-first high-CTR English Google News Title with exact figure/event (58-76 chars)",
-  "meta_description": "Compelling 145-155 char English SEO meta summary containing company name & key figure",
-  "company_name": "{company_name}",
-  "thumb_headline": "Short punchy 4-6 word English headline for thumbnail (include ₹ value / % if available)",
-  "sentiment": "POSITIVE or NEGATIVE or NEUTRAL",
-  "impact_gu": "1 crisp natural Gujarati sentence on investor impact (English digits & stock name)",
-  "impact_hi": "1 crisp natural Hindi sentence on investor impact (English digits & stock name)",
-  "impact_en": "1 crisp natural Indian English sentence on investor impact",
-  "tags": ["Stock Market", "{cap_category}", "{company_name}", "NSE", "BSE", "Market News"],
-  "faqs_schema": [
-    {{"q": "Direct Google search question 1 in English?", "a": "Concise factual 2-sentence answer."}},
-    {{"q": "Direct Google search question 2 in English?", "a": "Concise factual 2-sentence answer."}},
-    {{"q": "Direct Google search question 3 in English?", "a": "Concise factual 2-sentence answer."}}
-  ],
-  "quick_story_gu": ["Point 1 with exact figures", "Point 2", "Point 3", "Point 4", "Point 5"],
-  "quick_story_hi": ["Point 1 with exact figures", "Point 2", "Point 3", "Point 4", "Point 5"],
-  "quick_story_en": ["Point 1 with exact figures", "Point 2", "Point 3", "Point 4", "Point 5"],
-  "gujarati_html": "Complete 650-850 word Gujarati HTML article with exact data table, H2 sections, and 3 FAQs.",
-  "hindi_html": "Complete 650-850 word Hindi HTML article with same rich structure and exact data table.",
-  "english_html": "Complete 650-850 word Indian English HTML article with same rich structure and exact data table."
-}}
-"""
-    current_json_str = call_gemini_json(draft_prompt, temperature=0.25)
+        audited = step3_editorial_audit_and_fix(bundle, filing_context, py_failures)
+        editor_score = int(audited.get("editor_score", 0))
+        issues_found = audited.get("issues_found", [])
 
-    for attempt in range(1, MAX_AUDIT_ROUNDS + 1):
-        print(f"🔍 Deep Quality, Fact & Copyright Audit Round {attempt}/{MAX_AUDIT_ROUNDS}...")
-        try:
-            draft_obj = json.loads(current_json_str)
-        except Exception:
-            draft_obj = {}
+        # ઓડિટ પછી ફરીથી Python હાર્ડ ચેક ચલાવો (AI ખોટું ન બોલી શકે!)
+        post_py_score, post_py_failures = run_hard_python_gate(audited, source_blob)
+        total_score = post_py_score + editor_score
+        print(f"   📊 Round {rnd} Result -> Python: {post_py_score}/100 + Editor: {editor_score}/100 = {total_score}/200")
+        if post_py_failures:
+            print(f"      ❌ Remaining Python Errors: {post_py_failures[:3]}")
+        if issues_found:
+            print(f"      📝 Editor Notes: {issues_found[:3]}")
 
-        en_words = count_words(draft_obj.get("english_html", ""))
-        overlaps = find_copyright_overlaps(f"{summary}\n{pdf_text}", draft_obj.get("english_html", ""), ngram_size=8)
+        if total_score >= REQUIRED_TOTAL_SCORE and post_py_score == 100 and editor_score == 100 and not post_py_failures:
+            print("   ✅ PASSED 200/200 ZERO-ERROR ORGANIC QUALITY GATE!")
+            audited["hindi_html"] = sanitize_non_default_headings(audited["hindi_html"])
+            audited["english_html"] = sanitize_non_default_headings(audited["english_html"])
+            return audited
 
-        auto_alerts = []
-        if en_words < MIN_ENGLISH_WORDS:
-            auto_alerts.append(f"WORD COUNT TOO SHORT ({en_words} words). Expand Gujarati, Hindi, and English articles to 650-850 rich, insightful words each (AdSense & Google News requirement).")
-        if overlaps:
-            auto_alerts.append(f"COPYRIGHT OVERLAP DETECTED: Completely rewrite sentences containing these 8-word source matches: {overlaps}")
-        if "<table" not in str(draft_obj.get("gujarati_html", "")).lower():
-            auto_alerts.append("MISSING HTML TABLE: Add a clean verified HTML <table> summarizing the Result/Order/Filing numbers in all 3 languages.")
-        alert_str = "\n".join(auto_alerts) if auto_alerts else "Verify zero factual errors, zero typos, natural phrasing, and full Google News #1 readiness."
-
-        audit_prompt = f"""
-You are the Ruthless Chief Editor, Fact-Checker, and Google News SEO Auditor of 'Market Munafa'.
-Deeply inspect and FIX EVERY SINGLE ERROR in this JSON article against the Official Filing & PDF Text.
-
-{filing_context}
-
-AUTOMATED CHECKER ALERTS TO FIX NOW:
-{alert_str}
-
-MANDATORY 7-POINT DEEP AUDIT:
-1. 100% FACT & NUMBER ACCURACY: Verify every ₹ value, %, YoY/QoQ growth, client name, execution period, record date, and Standalone/Consolidated status directly against the PDF. Correct any mistake or missing PDF detail immediately.
-2. ZERO HALLUCINATION: Delete any number, target price, or claim not backed by the official filing.
-3. RESULT / ORDER COMPLETENESS: Confirm the HTML data `<table>` has complete verified details for this {event_type}.
-4. ZERO COPYRIGHT OVERLAP: Rewrite any sentence closely echoing the PDF/summary into completely fresh journalism.
-5. ZERO LANGUAGE/SPELLING ERRORS: Fix every typo, grammar slip, or unnatural phrase in Gujarati, Hindi, and English. Ensure English digits (0-9) and English company/stock names are preserved everywhere.
-6. GOOGLE NEWS, ADSENSE & WORD COUNT: Ensure 650-850 words per language, neutral E-E-A-T tone, no buy/sell advice, keyword-focused English SEO title (58-76 chars), and 3 solid `faqs_schema` items.
-7. CLEAN HTML: Zero markdown (`**`, `##`), properly closed tags.
-
-FIX all issues directly in the JSON, then give an honest "quality_score" (0-100) and "issues_found" list.
-Return ONLY valid JSON with all original keys PLUS "quality_score" (int) and "issues_found" (list).
-
-ARTICLE JSON TO AUDIT & FIX:
-{current_json_str}
-"""
-        audited_str = call_gemini_json(audit_prompt, temperature=0.1)
-        data = enforce_english_digits(json.loads(audited_str))
-        score = int(data.get("quality_score", 0))
-        final_en_words = count_words(data.get("english_html", ""))
-        final_overlaps = find_copyright_overlaps(f"{summary}\n{pdf_text}", data.get("english_html", ""), ngram_size=8)
-
-        print(f"📊 Round {attempt} Score: {score}/100 | EN Words: {final_en_words} | Overlaps: {len(final_overlaps)} | Issues: {data.get('issues_found', [])}")
-
-        has_markdown_bug = any(
-            "**" in str(data.get(k, "")) or "##" in str(data.get(k, ""))
-            for k in ["gujarati_html", "hindi_html", "english_html"]
-        )
-        all_langs_rich = (
-            final_en_words >= MIN_ENGLISH_WORDS
-            and len(strip_html(data.get("gujarati_html", ""))) >= 1400
-            and len(strip_html(data.get("hindi_html", ""))) >= 1400
-        )
-
-        if score >= MIN_QUALITY_SCORE and not has_markdown_bug and all_langs_rich and len(final_overlaps) <= 1:
-            print(f"✅ PASSED Strict Quality, Fact & Copyright Gate ({score}/100)!")
-            data["hindi_html"] = sanitize_non_default_headings(data["hindi_html"])
-            data["english_html"] = sanitize_non_default_headings(data["english_html"])
-            return data
-
-        current_json_str = json.dumps(data, ensure_ascii=False)
+        bundle = {k: v for k, v in audited.items() if k not in ("editor_score", "issues_found")}
         time.sleep(2)
 
-    raise ValueError(f"Article rejected: Did not meet strict {MIN_QUALITY_SCORE}/100 + word-count/copyright standards after {MAX_AUDIT_ROUNDS} rounds.")
+    raise ValueError(f"Article strictly REJECTED: Failed to achieve {REQUIRED_TOTAL_SCORE}/200 zero-defect score after {MAX_FIX_ROUNDS} rounds.")
 
-# ================= BLOGGER HTML BUILDER (#1 SEO + DUAL SCHEMA + INTERNAL LINKS) =================
+# ================= CLEAN NEWSPAPER-STYLE BLOGGER HTML BUILDER =================
 def render_quick_story_box(points, heading, accent_color):
-    items_html = "".join(f"<li style='margin-bottom:8px;'>⚡ {pt}</li>" for pt in points)
+    items_html = "".join(
+        f"<li style='margin-bottom:9px; padding-left:4px;'>{pt}</li>"
+        for pt in points
+    )
     return f"""
-    <div style="background:linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%); border:1px solid #cbd5e1; border-left:6px solid {accent_color}; border-radius:12px; padding:16px 20px; margin-bottom:22px;">
-      <div style="font-size:17px; font-weight:800; color:#0f172a; margin-bottom:10px;">🚀 {heading}</div>
-      <ul style="margin:0; padding-left:14px; list-style:none; font-size:15px; color:#1e293b;">{items_html}</ul>
+    <div style="background:#f8fafc; border:1px solid #e2e8f0; border-left:4px solid {accent_color}; border-radius:8px; padding:16px 20px; margin-bottom:22px;">
+      <div style="font-size:16.5px; font-weight:800; color:#0f172a; margin-bottom:10px; letter-spacing:0.2px;">{heading}</div>
+      <ul style="margin:0; padding-left:20px; font-size:15px; color:#1e293b; line-height:1.75;">{items_html}</ul>
     </div>
     """
 
 def render_impact_box(label, text, accent_color):
     return f"""
-    <div style="background:#f8fafc; border-left:5px solid {accent_color}; padding:12px 16px; border-radius:6px; margin-bottom:18px; font-size:15px;">
-      <strong>{label}:</strong> {text}
+    <div style="background:#ffffff; border:1px solid #e2e8f0; border-left:4px solid {accent_color}; padding:13px 16px; border-radius:6px; margin-bottom:18px; font-size:15px; color:#1e293b;">
+      <strong style="color:#0f172a;">{label}:</strong> {text}
     </div>
     """
 
 def build_blogger_html(data, thumb_url, source_name, cap_category, mcap_cr, official_link, related_posts, uid_short):
     sentiment = data.get("sentiment", "NEUTRAL").upper()
     if sentiment == "POSITIVE":
-        badge_bg, badge_label = "#16a34a", "📈 POSITIVE / BULLISH NEWS"
+        accent_color, sent_text = "#0f766e", "Positive"
     elif sentiment == "NEGATIVE":
-        badge_bg, badge_label = "#dc2626", "📉 NEGATIVE / BEARISH NEWS"
+        accent_color, sent_text = "#b91c1c", "Cautious / Negative"
     else:
-        badge_bg, badge_label = "#2563eb", "ℹ️ IMPORTANT MARKET UPDATE"
+        accent_color, sent_text = "#1d4ed8", "Neutral / Informational"
 
     now_ist = get_ist_now()
     now_iso = now_ist.isoformat()
-    ist_display = now_ist.strftime("%B %d, %Y | %I:%M %p IST")
-    mcap_badge = f"{cap_category} (₹{mcap_cr:,.0f} Cr)" if mcap_cr else cap_category
+    ist_display = now_ist.strftime("%B %d, %Y, %I:%M %p IST")
+    mcap_text = f"{cap_category} (₹{mcap_cr:,.0f} Cr)" if mcap_cr else cap_category
 
-    # Dual Schema: NewsArticle + FAQPage (Google News + Fast Search Console Indexing)
     news_schema = json.dumps({
         "@context": "https://schema.org",
         "@type": "NewsArticle",
@@ -788,8 +968,8 @@ def build_blogger_html(data, thumb_url, source_name, cap_category, mcap_cr, offi
             for rp in related_posts
         )
         related_html = f"""
-        <div style="margin-top:26px; padding:16px 18px; background:#f8fafc; border:1px solid #cbd5e1; border-radius:10px;">
-          <div style="font-size:17px; font-weight:800; color:#0f172a; margin-bottom:10px;">🔗 Also Read on Market Munafa</div>
+        <div style="margin-top:26px; padding:16px 18px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;">
+          <div style="font-size:16.5px; font-weight:800; color:#0f172a; margin-bottom:10px;">Also Read on Market Munafa</div>
           <ul style="margin:0; padding-left:20px; line-height:1.7;">{links_li}</ul>
         </div>
         """
@@ -800,54 +980,59 @@ def build_blogger_html(data, thumb_url, source_name, cap_category, mcap_cr, offi
 
 <article id="mm-post-{uid_short}" style="font-family: 'Noto Sans Gujarati', 'Noto Sans Devanagari', 'Segoe UI', Roboto, Arial, sans-serif; line-height: 1.85; color: #1e293b;">
   <style>
-    #mm-post-{uid_short} table {{ width:100%; border-collapse:collapse; margin:16px 0 22px 0; font-size:14.5px; }}
-    #mm-post-{uid_short} th {{ background:#0f172a; color:#ffffff; padding:10px 12px; border:1px solid #cbd5e1; text-align:left; }}
+    #mm-post-{uid_short} table {{ width:100%; border-collapse:collapse; margin:18px 0 22px 0; font-size:14.5px; }}
+    #mm-post-{uid_short} th {{ background:#0f172a; color:#ffffff; padding:10px 12px; border:1px solid #cbd5e1; text-align:left; font-weight:600; }}
     #mm-post-{uid_short} td {{ padding:10px 12px; border:1px solid #cbd5e1; background:#ffffff; }}
     #mm-post-{uid_short} tr:nth-child(even) td {{ background:#f8fafc; }}
+    #mm-post-{uid_short} h2 {{ color:#0f172a; font-size:20px; margin:24px 0 10px 0; border-left:4px solid {accent_color}; padding-left:10px; line-height:1.4; }}
   </style>
 
-  <figure style="text-align:center; margin:0 0 18px 0;">
-    <img src="{thumb_url}" alt="{data['seo_title_en']}" title="{data['seo_title_en']}" width="1280" height="720" style="width:100%; max-width:820px; height:auto; border-radius:14px; box-shadow:0 8px 24px rgba(0,0,0,0.12);" />
+  <figure style="text-align:center; margin:0 0 16px 0;">
+    <img src="{thumb_url}" alt="{data['seo_title_en']}" title="{data['seo_title_en']}" width="1280" height="720" style="width:100%; max-width:820px; height:auto; border-radius:12px; box-shadow:0 4px 16px rgba(15,23,42,0.10);" />
   </figure>
 
-  <div style="background:{badge_bg}; color:#ffffff; padding:12px 18px; border-radius:10px; font-weight:bold; font-size:15.5px; margin-bottom:14px; text-align:center;">
-    {badge_label} &nbsp;|&nbsp; {mcap_badge} &nbsp;|&nbsp; Source: {source_name}
+  <div style="display:flex; flex-wrap:wrap; gap:8px; justify-content:center; align-items:center; font-size:13.5px; color:#475569; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 14px; margin-bottom:14px;">
+    <span><strong>Source:</strong> {source_name}</span>
+    <span>•</span>
+    <span><strong>Category:</strong> {mcap_text}</span>
+    <span>•</span>
+    <span><strong>Outlook:</strong> <span style="color:{accent_color}; font-weight:700;">{sent_text}</span></span>
   </div>
 
-  <p style="font-size:13.5px; color:#64748b; text-align:center; margin:0 0 16px 0;">
-    📅 Published: {ist_display} &nbsp;•&nbsp; By <strong>Market Munafa Equity Research Desk</strong> &nbsp;•&nbsp; 4 min read
+  <p style="font-size:13px; color:#64748b; text-align:center; margin:0 0 16px 0;">
+    Updated: {ist_display} &nbsp;|&nbsp; Market Munafa Equity Research Desk
   </p>
 
   <div class="mm-langbar" style="display:flex; gap:10px; justify-content:center; margin-bottom:22px; flex-wrap:wrap;">
-    <button type="button" class="mm-lbtn" onclick="switchLang_{uid_short}('gu')" id="btn-{uid_short}-gu" style="padding:10px 22px; border:none; border-radius:8px; background:#0f172a; color:#fff; font-weight:bold; cursor:pointer;">ગુજરાતી</button>
-    <button type="button" class="mm-lbtn" onclick="switchLang_{uid_short}('hi')" id="btn-{uid_short}-hi" style="padding:10px 22px; border:none; border-radius:8px; background:#e2e8f0; color:#0f172a; font-weight:bold; cursor:pointer;">हिन्दी</button>
-    <button type="button" class="mm-lbtn" onclick="switchLang_{uid_short}('en')" id="btn-{uid_short}-en" style="padding:10px 22px; border:none; border-radius:8px; background:#e2e8f0; color:#0f172a; font-weight:bold; cursor:pointer;">English</button>
+    <button type="button" class="mm-lbtn" onclick="switchLang_{uid_short}('gu')" id="btn-{uid_short}-gu" style="padding:9px 22px; border:1px solid #0f172a; border-radius:6px; background:#0f172a; color:#fff; font-weight:700; cursor:pointer;">ગુજરાતી</button>
+    <button type="button" class="mm-lbtn" onclick="switchLang_{uid_short}('hi')" id="btn-{uid_short}-hi" style="padding:9px 22px; border:1px solid #cbd5e1; border-radius:6px; background:#ffffff; color:#0f172a; font-weight:700; cursor:pointer;">हिन्दी</button>
+    <button type="button" class="mm-lbtn" onclick="switchLang_{uid_short}('en')" id="btn-{uid_short}-en" style="padding:9px 22px; border:1px solid #cbd5e1; border-radius:6px; background:#ffffff; color:#0f172a; font-weight:700; cursor:pointer;">English</button>
   </div>
 
   <div id="lang-{uid_short}-gu" class="mm-lang-pane" data-lang="gu" style="display:block;">
-    {render_impact_box("રોકાણકારો માટે અસર", data.get("impact_gu", ""), badge_bg)}
-    {render_quick_story_box(data.get("quick_story_gu", []), "ક્વિક સ્ટોરી — મુખ્ય મુદ્દાઓ", badge_bg)}
+    {render_impact_box("રોકાણકારો માટે મુખ્ય અસર", data.get("impact_gu", ""), accent_color)}
+    {render_quick_story_box(data.get("quick_story_gu", []), "એક નજરમાં મુખ્ય બાબતો", accent_color)}
     {data['gujarati_html']}
   </div>
 
   <div id="lang-{uid_short}-hi" class="mm-lang-pane" data-lang="hi" style="display:none;">
-    {render_impact_box("निवेशकों पर असर", data.get("impact_hi", ""), badge_bg)}
-    {render_quick_story_box(data.get("quick_story_hi", []), "क्विक स्टोरी — मुख्य बातें", badge_bg)}
+    {render_impact_box("निवेशकों के लिए मुख्य असर", data.get("impact_hi", ""), accent_color)}
+    {render_quick_story_box(data.get("quick_story_hi", []), "एक नज़र में मुख्य बातें", accent_color)}
     {data['hindi_html']}
   </div>
 
   <div id="lang-{uid_short}-en" class="mm-lang-pane" data-lang="en" style="display:none;">
-    {render_impact_box("Impact on Investors", data.get("impact_en", ""), badge_bg)}
-    {render_quick_story_box(data.get("quick_story_en", []), "Quick Story — Key Highlights", badge_bg)}
+    {render_impact_box("Key Takeaway for Investors", data.get("impact_en", ""), accent_color)}
+    {render_quick_story_box(data.get("quick_story_en", []), "Key Highlights at a Glance", accent_color)}
     {data['english_html']}
   </div>
 
   {related_html}
 
-  <hr style="margin:24px 0; border:0; border-top:1px solid #cbd5e1;" />
-  <div style="background:#f1f5f9; padding:14px 16px; border-radius:10px; font-size:13px; color:#475569; line-height:1.65;">
-    <strong>Official Exchange Reference:</strong> <a href="{official_link}" target="_blank" rel="nofollow noopener">View Official {source_name} Filing</a><br/>
-    <strong>Editorial & SEBI Disclaimer (Market Munafa):</strong> આ આર્ટિકલ સત્તાવાર એક્સચેન્જ ફાઈલિંગ (NSE/BSE/SEBI) ના આધારે માત્ર માહિતી અને શૈક્ષણિક હેતુ માટે તૈયાર કરવામાં આવ્યો છે. આ કોઈ શેર ખરીદવા કે વેચવાની સલાહ નથી; રોકાણ કરતા પહેલા તમારા SEBI રજિસ્ટર્ડ સલાહકારની સલાહ લો.
+  <hr style="margin:24px 0; border:0; border-top:1px solid #e2e8f0;" />
+  <div style="background:#f8fafc; padding:14px 16px; border-radius:8px; border:1px solid #e2e8f0; font-size:13px; color:#475569; line-height:1.65;">
+    <strong>Official Filing Source:</strong> <a href="{official_link}" target="_blank" rel="nofollow noopener">{source_name} Document</a><br/>
+    <strong>Disclaimer:</strong> આ અહેવાલ સત્તાવાર એક્સચેન્જ ફાઈલિંગ (NSE/BSE/SEBI) પર આધારિત માત્ર માહિતી અને શૈક્ષણિક હેતુ માટે છે. આ કોઈ રોકાણની સલાહ નથી; કોઈ પણ નિર્ણય લેતા પહેલા SEBI રજિસ્ટર્ડ નાણાકીય સલાહકારની સલાહ લો.
   </div>
 </article>
 
@@ -858,8 +1043,9 @@ function switchLang_{uid_short}(lang) {{
     var btn = document.getElementById('btn-{uid_short}-' + l);
     if (pane) pane.style.display = (l === lang) ? 'block' : 'none';
     if (btn) {{
-      btn.style.background = (l === lang) ? '#0f172a' : '#e2e8f0';
+      btn.style.background = (l === lang) ? '#0f172a' : '#ffffff';
       btn.style.color = (l === lang) ? '#ffffff' : '#0f172a';
+      btn.style.borderColor = (l === lang) ? '#0f172a' : '#cbd5e1';
     }}
   }});
 }}
@@ -877,7 +1063,6 @@ def main():
     published_count = 0
 
     all_today_candidates = []
-
     for feed_info in FEEDS:
         print(f"📡 Scanning today's filings from: {feed_info['name']}...")
         try:
@@ -894,9 +1079,7 @@ def main():
             link = entry.get("link", "").strip()
             summary = entry.get("summary", "") or entry.get("description", "")
 
-            if not title or not link:
-                continue
-            if not is_important_news(title, summary):
+            if not title or not link or not is_important_news(title, summary):
                 continue
 
             uid = hashlib.md5(f"{title}|{link}".encode()).hexdigest()
@@ -912,21 +1095,15 @@ def main():
                 "dt": get_entry_dt(entry),
             })
 
-    # આજના સૌથી નવા મહત્વના ન્યૂઝ પહેલા પ્રોસેસ કરો
     all_today_candidates.sort(key=lambda x: x["dt"], reverse=True)
-    print(f"🔎 Found {len(all_today_candidates)} today's important candidate filings across all exchanges.")
+    print(f"🔎 Found {len(all_today_candidates)} today's candidate filings.")
 
     for item in all_today_candidates:
         if published_count >= MAX_POSTS_PER_RUN:
-            print(f"ℹ️ Reached per-run limit ({MAX_POSTS_PER_RUN}). Remaining today's filings will be covered in the next scheduled run.")
+            print(f"ℹ️ Reached per-run limit ({MAX_POSTS_PER_RUN}).")
             break
 
-        title = item["title"]
-        link = item["link"]
-        summary = item["summary"]
-        source = item["source"]
-        uid = item["uid"]
-
+        title, link, summary, source, uid = item["title"], item["link"], item["summary"], item["source"], item["uid"]
         raw_company = extract_company_prefix_from_title(title)
         prelim_event = detect_event_type(title, summary)
         prelim_key = normalize_company_day_key(raw_company, prelim_event)
@@ -936,65 +1113,75 @@ def main():
 
         print(f"\n🔥 Checking [{source} | {item['dt'].strftime('%I:%M %p IST')}]: {title}")
         try:
-            # 1) Screener.in પરથી Large / Mid / Small Cap તપાસ (SEBI Update સિવાય)
+            # 1) Screener.in પરથી Large / Mid / Small Cap તપાસ
             screener_info = {"found": False, "mcap_cr": None, "category": "Market Wide", "screener_name": "SEBI"}
             if source != "SEBI Update":
                 screener_info = get_market_cap_info(raw_company)
                 if screener_info["found"] and screener_info["mcap_cr"] is not None:
                     print(f"   💹 Market Cap: ₹{screener_info['mcap_cr']:,.0f} Cr ({screener_info['category']})")
                     if screener_info["mcap_cr"] < MIN_MARKET_CAP_CR:
-                        print(f"   ⏭️ Skipped Micro-Cap/SME stock (< ₹{MIN_MARKET_CAP_CR:.0f} Cr).")
+                        print(f"   ⏭️ Skipped Micro-Cap/SME (< ₹{MIN_MARKET_CAP_CR:.0f} Cr).")
                         history_keys.add(uid)
                         history["keys"].append(uid)
                         save_history(history)
                         continue
 
-            # 2) ઓફિશિયલ PDF માંથી સંપૂર્ણ વિગત ખેંચો
+            # 2) ઓફિશિયલ PDF ટેક્સ્ટ
             pdf_text = extract_pdf_text(link)
-            print(f"   📄 Extracted {len(pdf_text)} chars from official PDF.")
+            print(f"   📄 Extracted {len(pdf_text)} chars from PDF.")
 
-            # 3) AI Pre-Screening: પરચુરણ ન્યૂઝ અને Micro-cap/SME સખત રીતે બહાર કાઢો
+            # 3) PDF માં પણ રૂટિન ડિરેક્ટર દંડ હોય તો તરત બ્લોક કરો
+            if any(bad in pdf_text[:2500].lower() for bad in ["shortfall of independent", "composition of the board", "composition of board", "regulation 17(1)"]):
+                print("   ⏭️ Skipped routine board composition / independent director compliance fine.")
+                history_keys.add(uid)
+                history["keys"].append(uid)
+                save_history(history)
+                continue
+
+            # 4) AI Materiality & Market Cap Pre-Screening
             screen = pre_screen_filing(source, title, summary, pdf_text, screener_info)
             if not screen.get("is_eligible"):
-                print(f"   ⏭️ Skipped by Materiality/Cap Gate: {screen.get('reject_reason', 'Not high impact')}")
+                print(f"   ⏭️ Skipped by Materiality Gate: {screen.get('reject_reason', 'Not high impact')}")
                 history_keys.add(uid)
                 history["keys"].append(uid)
                 save_history(history)
                 continue
 
             company_name = screen.get("company_name") or screener_info.get("screener_name") or raw_company
+            short_company_name = (screen.get("short_company_name") or company_name).strip()[:22]
             cap_category = screener_info["category"] if screener_info["found"] else screen.get("cap_category", "Small Cap")
             if cap_category.lower() in ("micro cap", "sme", "unknown"):
-                print(f"   ⏭️ Skipped ineligible market cap category: {cap_category}")
+                print(f"   ⏭️ Skipped ineligible cap category: {cap_category}")
                 history_keys.add(uid)
                 history["keys"].append(uid)
                 save_history(history)
                 continue
 
             event_type = screen.get("event_type") or detect_event_type(title, summary, pdf_text)
+            sentiment = screen.get("material_sentiment", "NEUTRAL").upper()
             final_comp_key = normalize_company_day_key(company_name, event_type)
             if final_comp_key in history_keys:
                 print(f"   ⏭️ Already posted today ({final_comp_key}).")
                 continue
 
-            # 4) સંપૂર્ણ વિગતવાર, 3-રાઉન્ડ ઓડિટેડ SEO આર્ટિકલ બનાવો
-            article_data = generate_and_strictly_verify(
-                source, title, summary, pdf_text, link,
-                company_name, cap_category, screener_info.get("mcap_cr"), event_type
+            # 5) 200/200 ઝીરો-ભૂલ ઓર્ગેનિક જનરેશન અને વેરિફિકેશન
+            article_data = generate_and_verify_200_percent(
+                source, title, summary, pdf_text,
+                company_name, short_company_name, cap_category,
+                screener_info.get("mcap_cr"), event_type, sentiment
             )
 
-            # 5) Blogger પર ડુપ્લીકેટ ચેક
-            if is_duplicate_post(article_data["company_name"], article_data["seo_title_en"], event_type, recent_posts, history_titles):
+            # 6) Blogger ડુપ્લીકેટ ચેક
+            if is_duplicate_post(article_data["company_name"], article_data["seo_title_en"], recent_posts, history_titles):
                 print(f"   ⏭️ Skipped duplicate already on Blogger: {article_data['company_name']}")
-                history_keys.add(uid)
-                history_keys.add(final_comp_key)
+                history_keys.update([uid, final_comp_key])
                 history["keys"].extend([uid, final_comp_key])
                 save_history(history)
                 continue
 
-            # 6) થમ્બનેલ બનાવી તરત GitHub પર લાઈવ કરો
+            # 7) ઓટો-ફિટ થમ્બનેલ
             thumb_url = create_and_push_thumbnail(
-                article_data["company_name"],
+                article_data.get("short_company_name", short_company_name),
                 article_data["thumb_headline"],
                 article_data["sentiment"],
                 cap_category,
@@ -1002,7 +1189,7 @@ def main():
                 uid[:10],
             )
 
-            # 7) સ્વચ્છ લેબલ્સ અને Internal Links તૈયાર કરો
+            # 8) સ્વચ્છ લેબલ્સ + Internal Links + પબ્લિશ
             raw_labels = list(article_data.get("tags", [])) + [cap_category, "MARKET NEWS"]
             if event_type == "RESULT":
                 raw_labels.append("STOCK RESULT")
@@ -1023,7 +1210,6 @@ def main():
                 screener_info.get("mcap_cr"), link, related_posts, uid[:8]
             )
 
-            # 8) Blogger પર પબ્લિશ કરો
             body = {
                 "kind": "blogger#post",
                 "title": article_data["seo_title_en"],
@@ -1032,7 +1218,7 @@ def main():
             }
             post = blogger_service.posts().insert(blogId=os.environ["BLOG_ID"], body=body, isDraft=False).execute()
             post_url = post.get("url", "")
-            print(f"   ✅ Published: {post_url}")
+            print(f"   ✅ Published (200/200 Verified): {post_url}")
 
             recent_posts.insert(0, {
                 "title": article_data["seo_title_en"],
@@ -1051,7 +1237,7 @@ def main():
         except Exception as e:
             print(f"   ❌ NOT PUBLISHED '{title}': {e}")
 
-    print(f"\n🎉 Done. Total high-impact Large/Mid/Small Cap posts published in this run: {published_count}")
+    print(f"\n🎉 Done. Total 200/200 verified posts published in this run: {published_count}")
 
 if __name__ == "__main__":
     main()
