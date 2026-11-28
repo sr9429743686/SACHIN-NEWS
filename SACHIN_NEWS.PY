@@ -35,33 +35,13 @@ MAX_POSTS_PER_RUN = int(os.environ.get("MAX_POSTS_PER_RUN", "10"))
 BLOG_BASE_URL = "https://marketmunafa.blogspot.com/"
 SITE_LOGO_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgXG-GojgyTIZWy4ftRRsgpLsDMxrAEKCRb_BnZsfVTKT0_T9IELdKQYKgACOQkhus69xfx_xg-iVyLvP2-RAki8voVBwja88Dfsg_tQRQR7JvgegMGFfEQfm73oO00WeTo1vPUHghTXmXd_by6k0C-m3Y_5JhoYEjUF8Y8V3KKTbGnUn53dUY-6AN32_A/s1254/1001173067.png"
 
-# દરેક ફીડ માટે Primary + Fallback URLs (SEBI માટે 4-લેયર જુગાડ)
+# 100% સત્તાવાર (Official) એક્સચેન્જ અને SEBI URLs જ — કોઈ થર્ડ-પાર્ટી ન્યૂઝ વેબસાઈટ નહીં
 FEEDS = [
-    {
-        "name": "NSE Announcement",
-        "urls": ["https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml"],
-    },
-    {
-        "name": "BSE Announcement",
-        "urls": ["https://www.bseindia.com/data/xml/announcements.aspx"],
-    },
-    {
-        "name": "NSE Corporate Action",
-        "urls": ["https://nsearchives.nseindia.com/content/RSS/Corporate_action.xml"],
-    },
-    {
-        "name": "BSE Notice",
-        "urls": ["https://www.bseindia.com/data/xml/notices.xml"],
-    },
-    {
-        "name": "SEBI Update",
-        "urls": [
-            "https://www.sebi.gov.in/sebirss.xml",
-            "https://sebi.gov.in/sebirss.xml",
-            "https://api.allorigins.win/raw?url=https%3A%2F%2Fwww.sebi.gov.in%2Fsebirss.xml",
-            "https://news.google.com/rss/search?q=SEBI+(circular+OR+order+OR+regulation+OR+guidelines)+when:1d&hl=en-IN&gl=IN&ceid=IN:en",
-        ],
-    },
+    {"name": "NSE Announcement", "urls": ["https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml"]},
+    {"name": "BSE Announcement", "urls": ["https://www.bseindia.com/data/xml/announcements.aspx"]},
+    {"name": "NSE Corporate Action", "urls": ["https://nsearchives.nseindia.com/content/RSS/Corporate_action.xml"]},
+    {"name": "BSE Notice", "urls": ["https://www.bseindia.com/data/xml/notices.xml"]},
+    {"name": "SEBI Update", "urls": ["https://www.sebi.gov.in/sebirss.xml"]},
 ]
 
 IMPORTANT_KEYWORDS = [
@@ -238,24 +218,69 @@ def is_duplicate_post(company_name, seo_title, recent_posts, history_titles):
                 return True
     return False
 
-# ================= FEED FETCHER WITH FALLBACK (SEBI FIX) =================
-def fetch_feed_with_fallback(feed_info):
-    """Primary URL ફેઈલ થાય તો ઓટોમેટિક Fallback / Proxy / Google News RSS ટ્રાય કરે છે."""
-    name = feed_info["name"]
-    for idx, url in enumerate(feed_info["urls"], 1):
+# ================= OFFICIAL DIRECT FETCHER (DoH DNS FIX FOR SEBI) =================
+def resolve_official_ip_doh(hostname):
+    """ફક્ત સત્તાવાર ડોમેનનું IP શોધવા માટે Google/Cloudflare DNS-over-HTTPS વાપરે છે."""
+    doh_endpoints = [
+        f"https://dns.google/resolve?name={hostname}&type=A",
+        f"https://cloudflare-dns.com/dns-query?name={hostname}&type=A",
+    ]
+    for ep in doh_endpoints:
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=16)
-            if resp.status_code == 200 and resp.content:
-                parsed = feedparser.parse(resp.content)
-                if parsed.entries:
-                    if idx > 1:
-                        print(f"   ✅ {name} loaded via fallback #{idx} ({len(parsed.entries)} entries)")
-                    return parsed
-        except Exception as e:
-            if idx == len(feed_info["urls"]):
-                print(f"⚠️ All URLs failed for {name}: {e}")
-            else:
-                print(f"   ↪️ {name} URL #{idx} unavailable, trying backup...")
+            r = requests.get(ep, headers={"Accept": "application/dns-json"}, timeout=8)
+            if r.status_code == 200:
+                for ans in r.json().get("Answer", []):
+                    if ans.get("type") == 1 and ans.get("data"):
+                        return ans["data"]
+        except Exception:
+            continue
+    return None
+
+def fetch_official_url_bytes(url, referer=None):
+    """માત્ર સત્તાવાર URL પરથી જ ડેટા લાવે છે; DNS ફેઈલ થાય તો સત્તાવાર IP પર સીધું HTTPS કનેક્શન કરે છે."""
+    req_headers = dict(HEADERS)
+    if referer:
+        req_headers["Referer"] = referer
+    try:
+        resp = requests.get(url, headers=req_headers, timeout=18)
+        if resp.status_code == 200 and resp.content:
+            return resp.content, resp.headers.get("Content-Type", "")
+    except Exception:
+        pass
+
+    parsed_u = urllib.parse.urlparse(url)
+    host = parsed_u.hostname
+    if not host:
+        return None, ""
+    port = parsed_u.port or (443 if parsed_u.scheme == "https" else 80)
+    ip = resolve_official_ip_doh(host)
+    if not ip:
+        return None, ""
+    try:
+        cmd = [
+            "curl", "-sL", "--max-time", "20",
+            "--resolve", f"{host}:{port}:{ip}",
+            "-A", HEADERS["User-Agent"],
+        ]
+        if referer:
+            cmd.extend(["-e", referer])
+        cmd.append(url)
+        res = subprocess.run(cmd, capture_output=True, timeout=25)
+        if res.returncode == 0 and res.stdout:
+            return res.stdout, ""
+    except Exception:
+        pass
+    return None, ""
+
+def fetch_official_feed(feed_info):
+    name = feed_info["name"]
+    for url in feed_info["urls"]:
+        content, _ = fetch_official_url_bytes(url)
+        if content:
+            parsed = feedparser.parse(content)
+            if parsed.entries:
+                return parsed
+    print(f"ℹ️ {name} સત્તાવાર સર્વર હાલ ઉપલબ્ધ નથી — સ્કિપ કર્યું.")
     return None
 
 # ================= MARKET CAP FILTER (LARGE / MID / SMALL CAP ONLY) =================
@@ -320,7 +345,7 @@ def get_market_cap_info(company_query):
     MARKET_CAP_CACHE[cache_key] = result
     return result
 
-# ================= BLOGGER & PDF/DOCUMENT HELPERS =================
+# ================= BLOGGER & OFFICIAL PDF HELPERS =================
 def get_blogger_service():
     creds = Credentials(
         token=None,
@@ -360,49 +385,42 @@ def pick_related_internal_links(recent_posts, current_tags, max_links=3):
     scored.sort(key=lambda x: x[0], reverse=True)
     return [p for _, p in scored[:max_links]]
 
-def extract_pdf_text(link):
-    """NSE/BSE/SEBI PDF ટેક્સ્ટ લાવે છે; SEBI માટે સીધી લિંક ન ખુલે તો પ્રોક્સી બેકઅપ વાપરે છે."""
+def extract_pdf_text(link, depth=0):
+    """સીધા સત્તાવાર NSE/BSE/SEBI સર્વર પરથી જ PDF અથવા સત્તાવાર ડોક્યુમેન્ટ વાંચે છે."""
     if not link:
         return ""
-    candidate_urls = [link]
-    if "sebi.gov.in" in link.lower():
-        candidate_urls.append(f"https://api.allorigins.win/raw?url={urllib.parse.quote(link, safe='')}")
+    referer = None
+    if "nseindia.com" in link.lower():
+        referer = "https://www.nseindia.com/"
+    elif "bseindia.com" in link.lower():
+        referer = "https://www.bseindia.com/"
+    elif "sebi.gov.in" in link.lower():
+        referer = "https://www.sebi.gov.in/"
 
-    for target_url in candidate_urls:
-        try:
-            req_headers = dict(HEADERS)
-            if "nseindia.com" in target_url.lower():
-                req_headers["Referer"] = "https://www.nseindia.com/"
-            elif "bseindia.com" in target_url.lower():
-                req_headers["Referer"] = "https://www.bseindia.com/"
+    content, content_type = fetch_official_url_bytes(link, referer=referer)
+    if not content:
+        return ""
 
-            resp = requests.get(target_url, headers=req_headers, timeout=20)
-            if resp.status_code != 200:
-                continue
+    ct = (content_type or "").lower()
+    try:
+        if "pdf" in ct or link.lower().endswith(".pdf") or content[:4] == b"%PDF":
+            reader = PdfReader(io.BytesIO(content))
+            extracted = [p.extract_text().strip() for p in reader.pages[:8] if p.extract_text()]
+            return "\n".join(extracted)[:14000]
 
-            content_type = resp.headers.get("Content-Type", "").lower()
-            if "pdf" in content_type or link.lower().endswith(".pdf") or resp.content[:4] == b"%PDF":
-                reader = PdfReader(io.BytesIO(resp.content))
-                extracted = []
-                for page in reader.pages[:8]:
-                    txt = page.extract_text()
-                    if txt:
-                        extracted.append(txt.strip())
-                return "\n".join(extracted)[:14000]
-
-            # જો SEBI નું વેબપેજ હોય જેમાં PDF લિંક અંદર હોય તો HTML માંથી ટેક્સ્ટ/PDF લિંક વાંચો
-            if "sebi.gov.in" in link.lower() and "html" in content_type:
-                pdf_match = re.search(r'href=["\'](https?://[^"\']+\.pdf|/sebi_data/[^"\']+\.pdf)["\']', resp.text, flags=re.I)
-                if pdf_match:
-                    inner_pdf = pdf_match.group(1)
-                    if inner_pdf.startswith("/"):
-                        inner_pdf = "https://www.sebi.gov.in" + inner_pdf
-                    return extract_pdf_text(inner_pdf)
-                clean_txt = strip_html(resp.text)
-                if len(clean_txt) > 500:
-                    return clean_txt[:9000]
-        except Exception:
-            continue
+        if "sebi.gov.in" in link.lower() and depth < 1:
+            html_text = content.decode("utf-8", errors="ignore")
+            pdf_match = re.search(r'href=["\'](https?://[^"\']+\.pdf|/sebi_data/[^"\']+\.pdf)["\']', html_text, flags=re.I)
+            if pdf_match:
+                inner_pdf = pdf_match.group(1)
+                if inner_pdf.startswith("/"):
+                    inner_pdf = "https://www.sebi.gov.in" + inner_pdf
+                return extract_pdf_text(inner_pdf, depth=depth + 1)
+            clean_txt = strip_html(html_text)
+            if len(clean_txt) > 500:
+                return clean_txt[:9000]
+    except Exception:
+        pass
     return ""
 
 # ================= GEMINI CALLER =================
@@ -553,7 +571,7 @@ def run_hard_python_gate(bundle, source_text):
 def pre_screen_filing(source, title, summary, pdf_text, screener_info):
     prompt = f"""
 You are the Managing Editor of a respected Indian financial newspaper.
-Decide STRICTLY whether this NSE/BSE/SEBI filing is genuine, material, high-impact stock market news worthy of a full research report.
+Decide STRICTLY whether this official NSE/BSE/SEBI filing is genuine, material, high-impact stock market news worthy of a full research report.
 
 SOURCE: {source}
 TITLE: {title}
@@ -567,12 +585,12 @@ STRICT REJECTION RULES (REJECT WITHOUT HESITATION):
 2. REJECT TRIVIAL / PERCHURAN FILINGS: Reject routine board meeting date notices (without outcome), investor meet schedules, ESOP allotments, routine director/CS changes, credit rating reaffirmation without upgrade/downgrade, or filings lacking real material details.
 3. LARGE CAP, MID CAP, OR SMALL CAP ONLY:
    - If Market Cap < ₹500 Crore -> REJECT (Micro Cap / SME).
-   - If Screener Market Cap is unavailable: ONLY approve clearly established Large Cap, Mid Cap, or Small Cap (>=₹500 Cr) NSE/BSE companies, or major market-wide SEBI circulars/regulations affecting Indian retail/equity investors.
+   - If Screener Market Cap is unavailable: ONLY approve clearly established Large Cap, Mid Cap, or Small Cap (>=₹500 Cr) NSE/BSE companies, or major market-wide official SEBI circulars/regulations affecting Indian retail/equity investors.
 4. APPROVE ONLY HIGH-IMPACT NEWS:
    - Quarterly/Annual Financial Results (Q1/Q2/Q3/Q4) with real numbers
    - Material Order Wins / Contracts / LOA with meaningful value
    - Dividend, Bonus, Stock Split, Buyback
-   - Merger, Acquisition, Demerger, Major Capex/Expansion, USFDA Approval, QIP/Rights Issue, Major SEBI Circular/Rule/Order affecting Indian markets.
+   - Merger, Acquisition, Demerger, Major Capex/Expansion, USFDA Approval, QIP/Rights Issue, Major Official SEBI Circular/Rule/Order affecting Indian markets.
 
 Return ONLY valid JSON:
 {{
@@ -657,7 +675,7 @@ def create_and_push_thumbnail(short_company_name, headline_short, sentiment, cap
 
     CARD_L, CARD_T, CARD_R, CARD_B = 42, 42, 682, 678
     TEXT_X = 78
-    MAX_TEXT_W = (CARD_R - 36) - TEXT_X  # 568px
+    MAX_TEXT_W = (CARD_R - 36) - TEXT_X
 
     draw.rounded_rectangle([CARD_L, CARD_T, CARD_R, CARD_B], radius=28, fill=(255, 255, 255, 252), outline=accent, width=5)
 
@@ -758,7 +776,7 @@ MANDATORY ORDER / CONTRACT DETAILS:
 """
     return """
 MANDATORY FILING DETAILS:
-- Include a clean HTML <table> summarizing key parameters (Entity/Company, Category, Key Financial/Regulatory Metric, Effective/Record Date, Key Terms) strictly from the official filing/source.
+- Include a clean HTML <table> summarizing key parameters (Entity/Company, Category, Key Financial/Regulatory Metric, Effective/Record Date, Key Terms) strictly from the official filing/document.
 """
 
 def step1_write_organic_english(filing_context, company_name, short_company_name, cap_category, event_type, sentiment):
@@ -1101,8 +1119,8 @@ def main():
 
     all_today_candidates = []
     for feed_info in FEEDS:
-        print(f"📡 Scanning today's filings from: {feed_info['name']}...")
-        parsed = fetch_feed_with_fallback(feed_info)
+        print(f"📡 Scanning today's official filings from: {feed_info['name']}...")
+        parsed = fetch_official_feed(feed_info)
         if not parsed:
             continue
 
@@ -1130,7 +1148,7 @@ def main():
             })
 
     all_today_candidates.sort(key=lambda x: x["dt"], reverse=True)
-    print(f"🔎 Found {len(all_today_candidates)} today's candidate filings.")
+    print(f"🔎 Found {len(all_today_candidates)} today's official candidate filings.")
 
     for item in all_today_candidates:
         if published_count >= MAX_POSTS_PER_RUN:
@@ -1160,7 +1178,7 @@ def main():
                         continue
 
             pdf_text = extract_pdf_text(link)
-            print(f"   📄 Extracted {len(pdf_text)} chars from PDF/Document.")
+            print(f"   📄 Extracted {len(pdf_text)} chars from official PDF/Document.")
 
             if any(bad in pdf_text[:2500].lower() for bad in ["shortfall of independent", "composition of the board", "composition of board", "regulation 17(1)"]):
                 print("   ⏭️ Skipped routine board composition / independent director compliance fine.")
@@ -1267,7 +1285,7 @@ def main():
         except Exception as e:
             print(f"   ❌ NOT PUBLISHED '{title}': {e}")
 
-    print(f"\n🎉 Done. Total 200/200 verified posts published in this run: {published_count}")
+    print(f"\n🎉 Done. Total 200/200 verified official posts published in this run: {published_count}")
 
 if __name__ == "__main__":
     main()
