@@ -35,14 +35,48 @@ MAX_POSTS_PER_RUN = int(os.environ.get("MAX_POSTS_PER_RUN", "10"))
 BLOG_BASE_URL = "https://marketmunafa.blogspot.com/"
 SITE_LOGO_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgXG-GojgyTIZWy4ftRRsgpLsDMxrAEKCRb_BnZsfVTKT0_T9IELdKQYKgACOQkhus69xfx_xg-iVyLvP2-RAki8voVBwja88Dfsg_tQRQR7JvgegMGFfEQfm73oO00WeTo1vPUHghTXmXd_by6k0C-m3Y_5JhoYEjUF8Y8V3KKTbGnUn53dUY-6AN32_A/s1254/1001173067.png"
 
-# 100% સત્તાવાર (Official) એક્સચેન્જ અને SEBI URLs જ — કોઈ થર્ડ-પાર્ટી ન્યૂઝ વેબસાઈટ નહીં
+# 100% સત્તાવાર (Official) NSE, BSE અને SEBI RSS ફીડ્સ (કુલ 16 ફીડ્સ)
 FEEDS = [
+    # --- NSE Official Feeds ---
     {"name": "NSE Announcement", "urls": ["https://nsearchives.nseindia.com/content/RSS/Online_announcements.xml"]},
-    {"name": "BSE Announcement", "urls": ["https://www.bseindia.com/data/xml/announcements.aspx"]},
     {"name": "NSE Corporate Action", "urls": ["https://nsearchives.nseindia.com/content/RSS/Corporate_action.xml"]},
+    {"name": "NSE Daily Buyback", "urls": ["https://nsearchives.nseindia.com/content/RSS/Daily_Buyback.xml"]},
+    {"name": "NSE Board Meetings", "urls": ["https://nsearchives.nseindia.com/content/RSS/Board_Meetings.xml"]},
+    {"name": "NSE Shareholding Pattern", "urls": ["https://nsearchives.nseindia.com/content/RSS/Shareholding_Pattern.xml"]},
+    {"name": "NSE Annual Reports", "urls": ["https://nsearchives.nseindia.com/content/RSS/Annual_Reports.xml"]},
+    {"name": "NSE BRSR", "urls": ["https://nsearchives.nseindia.com/content/RSS/brsr.xml"]},
+    {"name": "NSE Circular", "urls": ["https://nsearchives.nseindia.com/content/RSS/Circulars.xml"]},
+
+    # --- BSE Official Feeds ---
+    {"name": "BSE Announcement", "urls": ["https://www.bseindia.com/data/xml/announcements.aspx"]},
+    {"name": "BSE Corporate Action", "urls": ["https://www.bseindia.com/data/XML/CorpActionFeed.aspx"]},
+    {"name": "BSE Insider Trading", "urls": ["https://www.bseindia.com/Data/XML/InsiderTradingFeed.aspx"]},
+    {"name": "BSE Board Meetings", "urls": ["https://beta.bseindia.com/Data/XML/BoardMeetingsFeed.xml"]},
+    {"name": "BSE Annual Reports", "urls": ["https://www.bseindia.com/Data/XML/AnnualReportFeed.aspx"]},
     {"name": "BSE Notice", "urls": ["https://www.bseindia.com/data/xml/notices.xml"]},
+    {"name": "BSE Sensex Update", "urls": ["https://www.bseindia.com/data/xml/sensexrss.xml"]},
+
+    # --- SEBI Official Feed ---
     {"name": "SEBI Update", "urls": ["https://www.sebi.gov.in/sebirss.xml"]},
 ]
+
+# માર્કેટ-વાઇડ ફીડ્સ (આના માટે સિંગલ કંપનીનું Screener માર્કેટ કેપ ચેક નહીં થાય)
+MARKET_WIDE_SOURCES = {"SEBI Update", "NSE Circular", "BSE Sensex Update"}
+
+# ખાસ ડેડિકેટેડ ફીડ્સ (જેમના ફાઈલિંગ સીધા મટિરિયાલિટી ગેટ પર જશે)
+DEDICATED_PASS_SOURCES = {
+    "NSE Daily Buyback",
+    "BSE Insider Trading",
+    "NSE Corporate Action",
+    "BSE Corporate Action",
+    "NSE Circular",
+    "BSE Sensex Update",
+    "SEBI Update",
+    "NSE Shareholding Pattern",
+    "NSE Annual Reports",
+    "BSE Annual Reports",
+    "NSE BRSR",
+}
 
 IMPORTANT_KEYWORDS = [
     "financial result", "quarterly result", "audited result", "unaudited result",
@@ -52,7 +86,9 @@ IMPORTANT_KEYWORDS = [
     "merger", "amalgamation", "acquisition", "acquire", "demerger", "takeover",
     "rights issue", "qip", "fund raising", "preferential issue", "capex", "expansion", "commissioning",
     "joint venture", "strategic partnership", "usfda", "fda approval", "patent",
-    "delisting", "open offer", "sebi", "circular", "regulation", "guidelines", "credit rating upgrade", "downgrade"
+    "delisting", "open offer", "sebi", "circular", "regulation", "guidelines",
+    "credit rating upgrade", "downgrade", "insider", "promoter", "stake", "disposal",
+    "sensex", "annual report", "shareholding", "brsr", "sustainability", "esg"
 ]
 
 IGNORE_KEYWORDS = [
@@ -62,10 +98,10 @@ IGNORE_KEYWORDS = [
     "investor meet", "investors meet", "conference call", "earnings call", "transcript",
     "audio recording", "video recording", "scrutinizer", "voting results", "postal ballot",
     "notice of agm", "notice of egm", "annual general meeting", "extraordinary general meeting",
-    "annual report", "esop", "esos", "employee stock option", "rta", "registrar and transfer",
+    "esop", "esos", "employee stock option", "rta", "registrar and transfer",
     "registered office", "clarification on price", "spurt in volume", "movement in price",
     "compliance certificate", "statement of investor complaints", "grievance redressal",
-    "corporate governance report", "shareholding pattern", "book closure",
+    "corporate governance report", "book closure",
     "record date for interest", "interest payment", "redemption of ncd", "debenture",
     "non-convertible", "commercial paper", "sme", "emerge", "strike off", "closure of subsidiary",
     "resignation of company secretary", "appointment of company secretary",
@@ -73,7 +109,7 @@ IGNORE_KEYWORDS = [
     "independent director", "composition of board", "composition of the board",
     "regulation 17", "regulation 18", "regulation 19", "regulation 20", "regulation 21",
     "non-compliance with the composition", "shortfall of independent", "woman director",
-    "corrigendum to notice", "intimation of board meeting", "board meeting intimation"
+    "corrigendum to notice"
 ]
 
 BANNED_AI_PHRASES = [
@@ -176,27 +212,55 @@ def get_entry_dt(entry):
     except Exception:
         return get_ist_now()
 
-def detect_event_type(title, summary, pdf_text=""):
+def detect_event_type(title, summary, pdf_text="", source=""):
+    src_low = source.lower()
     text = f"{title} {summary} {pdf_text[:1500]}".lower()
+    if "insider" in src_low or "insider trading" in text or "sast" in text:
+        return "INSIDER_TRADING"
+    if "buyback" in src_low or "buyback" in text:
+        return "BUYBACK"
+    if "board meeting" in src_low:
+        return "BOARD_MEETING"
+    if "shareholding" in src_low:
+        return "SHAREHOLDING"
+    if "annual report" in src_low:
+        return "ANNUAL_REPORT"
+    if "brsr" in src_low:
+        return "BRSR_ESG"
+    if "sensex" in src_low:
+        return "MARKET_INDEX"
     if any(k in text for k in ["financial result", "quarterly result", "audited financial", "unaudited financial", "statement of financial results", "q1", "q2", "q3", "q4"]):
         return "RESULT"
     if any(k in text for k in ["work order", "purchase order", "letter of award", "loa", "bagged order", "received order", "contract worth", "order worth", "l1 bidder", "award of contract", "order"]):
         return "ORDER"
-    if any(k in text for k in ["dividend", "bonus", "stock split", "sub-division", "buyback"]):
+    if any(k in text for k in ["dividend", "bonus", "stock split", "sub-division"]):
         return "CORPORATE_ACTION"
     if any(k in text for k in ["merger", "acquisition", "amalgamation", "demerger", "takeover", "joint venture"]):
         return "M_AND_A"
-    if any(k in text for k in ["sebi", "circular", "usfda", "fda", "regulation", "guidelines"]):
+    if "circular" in src_low or "sebi" in src_low or any(k in text for k in ["sebi", "circular", "usfda", "fda", "regulation", "guidelines"]):
         return "REGULATORY"
     return "IMPORTANT_UPDATE"
 
-def is_important_news(title, summary):
+def is_important_news(title, summary, source=""):
     text = f"{title} {summary}".lower()
     if any(bad in text for bad in IGNORE_KEYWORDS):
         return False
+
+    # બોર્ડ મીટિંગ ફીડમાં ફક્ત મોટા એજન્ડા (રિઝલ્ટ, ડિવિડન્ડ, બોનસ, સ્પ્લિટ, બાયબેક, ફંડ રેઈઝ, મર્જર) જ લો
+    if source in ("NSE Board Meetings", "BSE Board Meetings"):
+        high_agenda = [
+            "result", "dividend", "bonus", "split", "sub-division", "buyback",
+            "fund raising", "rights issue", "qip", "preferential", "merger", "demerger", "acquisition"
+        ]
+        return any(k in text for k in high_agenda)
+
+    # ડેડિકેટેડ સત્તાવાર ફીડ્સને સીધા મટિરિયાલિટી ગેટ પર જવા દો
+    if source in DEDICATED_PASS_SOURCES:
+        return True
+
     return any(good in text for good in IMPORTANT_KEYWORDS)
 
-def is_duplicate_post(company_name, seo_title, recent_posts, history_titles):
+def is_duplicate_post(company_name, seo_title, recent_posts, history_titles, is_market_wide=False):
     comp_clean = re.sub(r"[^a-z0-9\s]", " ", company_name.lower()).strip()
     stop = {"limited", "ltd", "india", "ind", "private", "pvt", "the", "of", "and", "corporation"}
     comp_words = [w for w in comp_clean.split() if w not in stop and len(w) > 2][:2]
@@ -210,7 +274,7 @@ def is_duplicate_post(company_name, seo_title, recent_posts, history_titles):
         if old_norm and difflib.SequenceMatcher(None, new_norm, old_norm).ratio() >= 0.56:
             return True
 
-    if company_name.lower() != "sebi":
+    if not is_market_wide:
         for p in recent_posts:
             p_date = str(p.get("published", ""))[:10]
             p_title_low = p["title"].lower()
@@ -218,7 +282,17 @@ def is_duplicate_post(company_name, seo_title, recent_posts, history_titles):
                 return True
     return False
 
-# ================= OFFICIAL DIRECT FETCHER (DoH DNS FIX FOR SEBI) =================
+# ================= OFFICIAL DIRECT FETCHER (DoH DNS FIX) =================
+def get_official_referer(url):
+    low = url.lower()
+    if "nseindia.com" in low:
+        return "https://www.nseindia.com/"
+    if "bseindia.com" in low:
+        return "https://www.bseindia.com/"
+    if "sebi.gov.in" in low:
+        return "https://www.sebi.gov.in/"
+    return None
+
 def resolve_official_ip_doh(hostname):
     """ફક્ત સત્તાવાર ડોમેનનું IP શોધવા માટે Google/Cloudflare DNS-over-HTTPS વાપરે છે."""
     doh_endpoints = [
@@ -239,8 +313,9 @@ def resolve_official_ip_doh(hostname):
 def fetch_official_url_bytes(url, referer=None):
     """માત્ર સત્તાવાર URL પરથી જ ડેટા લાવે છે; DNS ફેઈલ થાય તો સત્તાવાર IP પર સીધું HTTPS કનેક્શન કરે છે."""
     req_headers = dict(HEADERS)
-    if referer:
-        req_headers["Referer"] = referer
+    ref = referer or get_official_referer(url)
+    if ref:
+        req_headers["Referer"] = ref
     try:
         resp = requests.get(url, headers=req_headers, timeout=18)
         if resp.status_code == 200 and resp.content:
@@ -262,8 +337,8 @@ def fetch_official_url_bytes(url, referer=None):
             "--resolve", f"{host}:{port}:{ip}",
             "-A", HEADERS["User-Agent"],
         ]
-        if referer:
-            cmd.extend(["-e", referer])
+        if ref:
+            cmd.extend(["-e", ref])
         cmd.append(url)
         res = subprocess.run(cmd, capture_output=True, timeout=25)
         if res.returncode == 0 and res.stdout:
@@ -280,7 +355,7 @@ def fetch_official_feed(feed_info):
             parsed = feedparser.parse(content)
             if parsed.entries:
                 return parsed
-    print(f"ℹ️ {name} સત્તાવાર સર્વર હાલ ઉપલબ્ધ નથી — સ્કિપ કર્યું.")
+    print(f"ℹ️ {name} સત્તાવાર ફીડ હાલ ખાલી/અનુપલબ્ધ છે — સ્કિપ કર્યું.")
     return None
 
 # ================= MARKET CAP FILTER (LARGE / MID / SMALL CAP ONLY) =================
@@ -389,14 +464,7 @@ def extract_pdf_text(link, depth=0):
     """સીધા સત્તાવાર NSE/BSE/SEBI સર્વર પરથી જ PDF અથવા સત્તાવાર ડોક્યુમેન્ટ વાંચે છે."""
     if not link:
         return ""
-    referer = None
-    if "nseindia.com" in link.lower():
-        referer = "https://www.nseindia.com/"
-    elif "bseindia.com" in link.lower():
-        referer = "https://www.bseindia.com/"
-    elif "sebi.gov.in" in link.lower():
-        referer = "https://www.sebi.gov.in/"
-
+    referer = get_official_referer(link)
     content, content_type = fetch_official_url_bytes(link, referer=referer)
     if not content:
         return ""
@@ -582,24 +650,28 @@ PDF EXCERPT:
 
 STRICT REJECTION RULES (REJECT WITHOUT HESITATION):
 1. REJECT ROUTINE / MINOR FINES: Reject NSE/BSE fines for independent director vacancy, board composition (LODR Reg 17/18/19/20/21), or any minor compliance penalty below ₹5 Crore (or < 0.05% of market cap).
-2. REJECT TRIVIAL / PERCHURAN FILINGS: Reject routine board meeting date notices (without outcome), investor meet schedules, ESOP allotments, routine director/CS changes, credit rating reaffirmation without upgrade/downgrade, or filings lacking real material details.
+2. REJECT TRIVIAL / PERCHURAN FILINGS: Reject routine/tiny insider trades (below ₹1 Crore value or routine ESOP exercise), generic boilerplate annual report/BRSR links with no concrete financial highlights extracted, routine board meetings without dividend/result/bonus/split/buyback/fund-raise agenda, routine compliance notices, or filings lacking real material numbers.
 3. LARGE CAP, MID CAP, OR SMALL CAP ONLY:
    - If Market Cap < ₹500 Crore -> REJECT (Micro Cap / SME).
-   - If Screener Market Cap is unavailable: ONLY approve clearly established Large Cap, Mid Cap, or Small Cap (>=₹500 Cr) NSE/BSE companies, or major market-wide official SEBI circulars/regulations affecting Indian retail/equity investors.
+   - If Source is SEBI Update, NSE Circular, or BSE Sensex Update -> approve ONLY if it is a major market-moving circular, rule, or index development affecting Indian retail/equity investors (`cap_category = "Market Wide"`).
+   - For all individual stock filings: ONLY approve established Large Cap, Mid Cap, or Small Cap (>=₹500 Cr) companies.
 4. APPROVE ONLY HIGH-IMPACT NEWS:
    - Quarterly/Annual Financial Results (Q1/Q2/Q3/Q4) with real numbers
    - Material Order Wins / Contracts / LOA with meaningful value
-   - Dividend, Bonus, Stock Split, Buyback
-   - Merger, Acquisition, Demerger, Major Capex/Expansion, USFDA Approval, QIP/Rights Issue, Major Official SEBI Circular/Rule/Order affecting Indian markets.
+   - Dividend, Bonus, Stock Split, Daily Buyback progress/announcement
+   - Significant Insider Trading / Promoter Buying or Selling (>= ₹1 Crore value)
+   - High-impact Board Meetings (for results, dividend, bonus, split, buyback, fund raise)
+   - Notable Shareholding Pattern shifts (FII/DII/Promoter stake change) or Annual Report/BRSR with clear concrete numbers
+   - Merger, Acquisition, Demerger, Major Capex/Expansion, USFDA Approval, QIP/Rights Issue, Major Official SEBI/NSE Circular or Sensex update.
 
 Return ONLY valid JSON:
 {{
   "is_eligible": true or false,
   "reject_reason": "Clear short reason if false, else empty",
-  "company_name": "Official English Company Name (or 'SEBI' for market-wide SEBI circulars)",
-  "short_company_name": "Clean short display name for thumbnail, max 20 chars (e.g., 'Power Grid', 'Tata Motors', 'SEBI Update')",
+  "company_name": "Official English Company Name (or 'SEBI' / 'NSE' / 'BSE Sensex' for market-wide updates)",
+  "short_company_name": "Clean short display name for thumbnail, max 20 chars (e.g., 'Tata Motors', 'SEBI Update', 'BSE Sensex')",
   "cap_category": "Large Cap or Mid Cap or Small Cap or Market Wide or Micro Cap",
-  "event_type": "RESULT or ORDER or CORPORATE_ACTION or M_AND_A or REGULATORY or IMPORTANT_UPDATE",
+  "event_type": "RESULT or ORDER or BUYBACK or INSIDER_TRADING or CORPORATE_ACTION or BOARD_MEETING or SHAREHOLDING or ANNUAL_REPORT or BRSR_ESG or M_AND_A or REGULATORY or MARKET_INDEX or IMPORTANT_UPDATE",
   "material_sentiment": "POSITIVE or NEGATIVE or NEUTRAL"
 }}
 """
@@ -774,9 +846,19 @@ MANDATORY RESULT DETAILS:
 MANDATORY ORDER / CONTRACT DETAILS:
 - Include a clean HTML <table> with exact Regulation 30 points from the PDF: Exact Order Value (₹ Cr/Lakh/USD), Client / Awarding Authority, Domestic or International, Scope of Work, Execution Timeline, and Related-Party Disclosure (Yes/No).
 """
+    if event_type == "INSIDER_TRADING":
+        return """
+MANDATORY INSIDER TRADING DETAILS:
+- Include a clean HTML <table> with exact verified filing details: Name & Category of Person (Promoter / Director / KMP), Transaction Type (Market Purchase / Disposal), Number of Shares, Transaction Value (₹ Cr/Lakh), Transaction Mode, and Pre vs Post-Transaction Shareholding %.
+"""
+    if event_type == "BUYBACK":
+        return """
+MANDATORY BUYBACK DETAILS:
+- Include a clean HTML <table> summarizing: Buyback Route (Tender Offer / Open Market), Shares Bought Back (Daily & Cumulative), Buyback Price / Average Price (₹), Total Outlay / Utilization (₹ Cr), and Percentage of Total Buyback Completed (only verified numbers from filing).
+"""
     return """
 MANDATORY FILING DETAILS:
-- Include a clean HTML <table> summarizing key parameters (Entity/Company, Category, Key Financial/Regulatory Metric, Effective/Record Date, Key Terms) strictly from the official filing/document.
+- Include a clean HTML <table> summarizing key parameters (Entity/Company, Category, Key Financial/Corporate Action/Regulatory Metric, Effective/Record/Meeting Date, Key Terms) strictly from the official filing/document.
 """
 
 def step1_write_organic_english(filing_context, company_name, short_company_name, cap_category, event_type, sentiment):
@@ -836,7 +918,7 @@ CRITICAL SCRIPT & ACCURACY RULES (NON-NEGOTIABLE):
 1. WRITE EVERY SINGLE SENTENCE IN {target_lang_name} SCRIPT: `impact_{lang_code}`, EVERY bullet in `quick_story_{lang_code}`, and ALL paragraphs, headings, table labels, and FAQs in `{target_lang_name.lower()}_html` MUST be written in natural {target_lang_name} script — NEVER leave full sentences in English!
 2. PRESERVE ENGLISH DIGITS & COMPANY/SHARE NAMES ONLY:
    - Keep ALL numbers strictly in English Arabic digits (`0-9`, e.g., `₹450 Crore`, `14.5%`, `Q2 FY27`).
-   - Keep ALL company names, stock names, and standard market acronyms strictly in English Latin letters (`{company_name}`, `{short_company_name}`, `NSE`, `BSE`, `SEBI`, `PAT`, `EBITDA`, `EPS`, `IPO`, `LOA`).
+   - Keep ALL company names, stock names, and standard market acronyms strictly in English Latin letters (`{company_name}`, `{short_company_name}`, `NSE`, `BSE`, `SEBI`, `PAT`, `EBITDA`, `EPS`, `IPO`, `LOA`, `BRSR`).
 3. KEEP 100% OF FACTS, NUMBERS & HTML TABLE: Include the complete verified HTML `<table>` and all 3 `<h2>` sections + 3 FAQs (600-780 words). Do not shorten, summarize, or invent any number.
 4. CLEAN HTML ONLY: Use `<h2>`, `<h3>`, `<p>`, `<table>`, `<thead>`, `<tbody>`, `<tr>`, `<th>`, `<td>`, `<ul>`, `<li>`, `<strong>`. Zero markdown (`**` or `##`).
 
@@ -1131,7 +1213,7 @@ def main():
             link = entry.get("link", "").strip()
             summary = strip_html(entry.get("summary", "") or entry.get("description", ""))
 
-            if not title or not link or not is_important_news(title, summary):
+            if not title or not link or not is_important_news(title, summary, feed_info["name"]):
                 continue
 
             uid = hashlib.md5(f"{title}|{link}".encode()).hexdigest()
@@ -1148,7 +1230,7 @@ def main():
             })
 
     all_today_candidates.sort(key=lambda x: x["dt"], reverse=True)
-    print(f"🔎 Found {len(all_today_candidates)} today's official candidate filings.")
+    print(f"🔎 Found {len(all_today_candidates)} today's official candidate filings across all {len(FEEDS)} feeds.")
 
     for item in all_today_candidates:
         if published_count >= MAX_POSTS_PER_RUN:
@@ -1156,17 +1238,18 @@ def main():
             break
 
         title, link, summary, source, uid = item["title"], item["link"], item["summary"], item["source"], item["uid"]
-        raw_company = "SEBI" if source == "SEBI Update" else extract_company_prefix_from_title(title)
-        prelim_event = detect_event_type(title, summary)
-        prelim_key = normalize_company_day_key(raw_company if source != "SEBI Update" else title[:40], prelim_event)
+        is_market_wide = source in MARKET_WIDE_SOURCES
+        raw_company = source if is_market_wide else extract_company_prefix_from_title(title)
+        prelim_event = detect_event_type(title, summary, source=source)
+        prelim_key = normalize_company_day_key(title[:45] if is_market_wide else raw_company, prelim_event)
 
         if uid in history_keys or prelim_key in history_keys:
             continue
 
         print(f"\n🔥 Checking [{source} | {item['dt'].strftime('%I:%M %p IST')}]: {title}")
         try:
-            screener_info = {"found": False, "mcap_cr": None, "category": "Market Wide", "screener_name": "SEBI"}
-            if source != "SEBI Update":
+            screener_info = {"found": False, "mcap_cr": None, "category": "Market Wide", "screener_name": source}
+            if not is_market_wide:
                 screener_info = get_market_cap_info(raw_company)
                 if screener_info["found"] and screener_info["mcap_cr"] is not None:
                     print(f"   💹 Market Cap: ₹{screener_info['mcap_cr']:,.0f} Cr ({screener_info['category']})")
@@ -1197,21 +1280,24 @@ def main():
 
             company_name = screen.get("company_name") or screener_info.get("screener_name") or raw_company
             short_company_name = (screen.get("short_company_name") or company_name).strip()[:22]
-            cap_category = screener_info["category"] if screener_info["found"] else screen.get("cap_category", "Small Cap")
-            if source == "SEBI Update":
-                cap_category = "Market Wide"
-            if cap_category.lower() in ("micro cap", "sme", "unknown"):
+            cap_category = "Market Wide" if is_market_wide else (
+                screener_info["category"] if screener_info["found"] else screen.get("cap_category", "Small Cap")
+            )
+            if not is_market_wide and cap_category.lower() in ("micro cap", "sme", "unknown"):
                 print(f"   ⏭️ Skipped ineligible cap category: {cap_category}")
                 history_keys.add(uid)
                 history["keys"].append(uid)
                 save_history(history)
                 continue
 
-            event_type = screen.get("event_type") or detect_event_type(title, summary, pdf_text)
+            event_type = screen.get("event_type") or detect_event_type(title, summary, pdf_text, source=source)
             sentiment = screen.get("material_sentiment", "NEUTRAL").upper()
-            final_comp_key = normalize_company_day_key(company_name if source != "SEBI Update" else title[:40], event_type)
+            final_comp_key = normalize_company_day_key(title[:45] if is_market_wide else company_name, event_type)
             if final_comp_key in history_keys:
                 print(f"   ⏭️ Already posted today ({final_comp_key}).")
+                history_keys.add(uid)
+                history["keys"].append(uid)
+                save_history(history)
                 continue
 
             article_data = generate_and_verify_200_percent(
@@ -1220,7 +1306,7 @@ def main():
                 screener_info.get("mcap_cr"), event_type, sentiment
             )
 
-            if is_duplicate_post(article_data["company_name"], article_data["seo_title_en"], recent_posts, history_titles):
+            if is_duplicate_post(article_data["company_name"], article_data["seo_title_en"], recent_posts, history_titles, is_market_wide=is_market_wide):
                 print(f"   ⏭️ Skipped duplicate already on Blogger: {article_data['company_name']}")
                 history_keys.update([uid, final_comp_key])
                 history["keys"].extend([uid, final_comp_key])
@@ -1241,6 +1327,10 @@ def main():
                 raw_labels.append("STOCK RESULT")
             elif event_type == "ORDER":
                 raw_labels.append("SHARE ORDER")
+            elif event_type == "BUYBACK":
+                raw_labels.append("BUYBACK")
+            elif event_type == "INSIDER_TRADING":
+                raw_labels.append("INSIDER TRADING")
             elif source == "SEBI Update":
                 raw_labels.append("SEBI UPDATE")
 
